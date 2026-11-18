@@ -1,16 +1,35 @@
-import { ChatInputActions, type ChatInputActionsProps } from '@lobehub/editor/react';
+import { type ChatInputActionsProps } from '@lobehub/editor/react';
+import { ChatInputActions } from '@lobehub/editor/react';
+import * as stylex from '@stylexjs/stylex';
+import { type StyleXStyles } from '@stylexjs/stylex';
 import { memo, useMemo } from 'react';
 
 import { useGlobalStore } from '@/store/global';
 import { systemStatusSelectors } from '@/store/global/selectors';
-import { useUserStore } from '@/store/user';
-import { preferenceSelectors } from '@/store/user/slices/preference/selectors';
 
-import { ActionKeys, actionMap } from '../ActionBar/config';
+import { type ActionKey, type ActionKeys } from '../ActionBar/config';
+import { actionMap } from '../ActionBar/config';
+import { useChatInputResourceAccess } from '../hooks/useChatInputResourceAccess';
 import { useChatInputStore } from '../store';
+import { type DropdownPlacement } from './context';
+import { ActionBarContext, useActionBarContext } from './context';
+import { filterChatOnlyActions } from './filterChatOnlyActions';
 
-const mapActionsToItems = (keys: ActionKeys[]): ChatInputActionsProps['items'] =>
-  keys.map((actionKey, index) => {
+const mapActionToItem = (actionKey: ActionKey) => {
+  const Render = actionMap[actionKey];
+
+  return {
+    alwaysDisplay: actionKey === 'contextWindow',
+    children: <Render key={actionKey} />,
+    key: actionKey,
+  };
+};
+
+const mapActionsToItems = (
+  keys: ActionKeys[],
+  { disableCollapse = false }: { disableCollapse?: boolean } = {},
+): ChatInputActionsProps['items'] =>
+  keys.flatMap((actionKey, index) => {
     if (typeof actionKey === 'string') {
       if (actionKey === '---') {
         return {
@@ -18,53 +37,80 @@ const mapActionsToItems = (keys: ActionKeys[]): ChatInputActionsProps['items'] =
           type: 'divider',
         };
       }
-      const Render = actionMap[actionKey];
-      return {
-        alwaysDisplay: actionKey === 'mainToken',
-        children: <Render key={actionKey} />,
-        key: actionKey,
-      };
-    } else {
-      return {
-        children: actionKey.map((groupActionKey) => {
-          const Render = actionMap[groupActionKey];
-          return {
-            children: <Render key={groupActionKey} />,
-            key: groupActionKey,
-          };
-        }),
-        key: `group-${index}`,
-        type: 'collapse',
-      };
+
+      return mapActionToItem(actionKey);
     }
+
+    if (disableCollapse) return actionKey.map(mapActionToItem);
+
+    return {
+      children: actionKey.map((groupActionKey) => mapActionToItem(groupActionKey)),
+      key: `group-${index}`,
+      type: 'collapse',
+    };
   });
 
-const ActionToolbar = memo(() => {
-  const [expandInputActionbar, toggleExpandInputActionbar] = useGlobalStore((s) => [
-    systemStatusSelectors.expandInputActionbar(s),
-    s.toggleExpandInputActionbar,
-  ]);
-  const enableRichRender = useUserStore(preferenceSelectors.inputMarkdownRender);
+export interface ActionToolbarProps {
+  borderRadius?: number;
+  disableCollapse?: boolean;
+  dropdownPlacement?: DropdownPlacement;
+  extraActionItems?: ChatInputActionsProps['items'];
+}
 
-  const leftActions = useChatInputStore((s) =>
-    s.leftActions.filter((item) => (enableRichRender ? true : item !== 'typo')),
-  );
+interface ActionToolbarComponentProps extends ActionToolbarProps {
+  xstyle?: StyleXStyles;
+}
 
-  const mobile = useChatInputStore((s) => s.mobile);
+const ActionToolbar = memo<ActionToolbarComponentProps>(
+  ({ borderRadius, disableCollapse = false, dropdownPlacement, extraActionItems = [], xstyle }) => {
+    const [expandInputActionbar, toggleExpandInputActionbar] = useGlobalStore((s) => [
+      systemStatusSelectors.expandInputActionbar(s),
+      s.toggleExpandInputActionbar,
+    ]);
+    const { canConfigureResource, canShowControls } = useChatInputResourceAccess();
 
-  const items = useMemo(() => mapActionsToItems(leftActions), [leftActions]);
+    const leftActions = useChatInputStore((s) =>
+      canConfigureResource ? s.leftActions : filterChatOnlyActions(s.leftActions),
+    );
 
-  return (
-    <ChatInputActions
-      collapseOffset={mobile ? 48 : 80}
-      defaultGroupCollapse={true}
-      groupCollapse={!expandInputActionbar}
-      items={items}
-      onGroupCollapseChange={(v) => {
-        toggleExpandInputActionbar(!v);
-      }}
-    />
-  );
-});
+    const mobile = useChatInputStore((s) => s.mobile);
+
+    const items = useMemo(
+      () => (mapActionsToItems(leftActions, { disableCollapse }) ?? []).concat(extraActionItems),
+      [disableCollapse, extraActionItems, leftActions],
+    );
+
+    // Keep an outer action size (e.g. the compact composer preset) instead of
+    // resetting it for the toolbar's own items.
+    const { actionSize } = useActionBarContext();
+    const contextValue = useMemo(
+      () => ({ actionSize, borderRadius, dropdownPlacement }),
+      [actionSize, borderRadius, dropdownPlacement],
+    );
+
+    if (!canShowControls) return null;
+
+    return (
+      <ActionBarContext value={contextValue}>
+        <ChatInputActions
+          autoCollapse={!disableCollapse}
+          className={stylex.props(xstyle).className}
+          collapseOffset={mobile ? 48 : 80}
+          defaultGroupCollapse={!disableCollapse}
+          groupCollapse={disableCollapse ? false : !expandInputActionbar}
+          items={items}
+          style={{ paddingLeft: 6 }}
+          onGroupCollapseChange={
+            disableCollapse
+              ? undefined
+              : (v) => {
+                  toggleExpandInputActionbar(!v);
+                }
+          }
+        />
+      </ActionBarContext>
+    );
+  },
+);
 
 export default ActionToolbar;

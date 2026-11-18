@@ -51,6 +51,11 @@ class MessageCheckingProcessor extends BaseProcessor {
 
     return this.markAsExecuted(cloned);
   }
+
+  /** Expose isEmptyMessage for direct testing with arbitrary values */
+  public testIsEmptyMessage(value: any): boolean {
+    return this.isEmptyMessage(value);
+  }
 }
 
 describe('BaseProcessor', () => {
@@ -66,18 +71,6 @@ describe('BaseProcessor', () => {
       maxTokens: 4000,
       model: 'test-model',
     },
-  });
-
-  describe('constructor', () => {
-    it('should initialize with options', () => {
-      const processor = new TestProcessor({ debug: true });
-      expect(processor.name).toBe('TestProcessor');
-    });
-
-    it('should initialize without options', () => {
-      const processor = new TestProcessor();
-      expect(processor.name).toBe('TestProcessor');
-    });
   });
 
   describe('process', () => {
@@ -96,7 +89,7 @@ describe('BaseProcessor', () => {
       const invalidContext = { messages: 'not an array' } as any;
 
       await expect(processor.process(invalidContext)).rejects.toThrow(ProcessorError);
-      await expect(processor.process(invalidContext)).rejects.toThrow('无效的上下文');
+      await expect(processor.process(invalidContext)).rejects.toThrow('Invalid context');
     });
 
     it('should validate output context', async () => {
@@ -104,7 +97,7 @@ describe('BaseProcessor', () => {
       const context = createContext([{ content: 'test', role: 'user' }]);
 
       await expect(processor.process(context)).rejects.toThrow(ProcessorError);
-      await expect(processor.process(context)).rejects.toThrow('无效的输出上下文');
+      await expect(processor.process(context)).rejects.toThrow('Invalid output context');
     });
 
     it('should wrap errors in ProcessorError', async () => {
@@ -145,13 +138,13 @@ describe('BaseProcessor', () => {
     it('should reject null context', async () => {
       const processor = new TestProcessor();
 
-      await expect(processor.process(null as any)).rejects.toThrow('无效的上下文');
+      await expect(processor.process(null as any)).rejects.toThrow('Invalid context');
     });
 
     it('should reject undefined context', async () => {
       const processor = new TestProcessor();
 
-      await expect(processor.process(undefined as any)).rejects.toThrow('无效的上下文');
+      await expect(processor.process(undefined as any)).rejects.toThrow('Invalid context');
     });
 
     it('should reject context without messages array', async () => {
@@ -162,7 +155,7 @@ describe('BaseProcessor', () => {
         metadata: {},
       } as any;
 
-      await expect(processor.process(invalidContext)).rejects.toThrow('无效的上下文');
+      await expect(processor.process(invalidContext)).rejects.toThrow('Invalid context');
     });
   });
 
@@ -185,14 +178,14 @@ describe('BaseProcessor', () => {
     it('should preserve all context properties', async () => {
       const processor = new TestProcessor();
       const context = createContext([{ content: 'test', role: 'user' }]);
-      context.metadata.customField = 'customValue';
+      (context.metadata as any).customField = 'customValue';
 
       const result = await processor.process(context);
 
       expect(result.isAborted).toBe(context.isAborted);
       expect(result.metadata.model).toBe(context.metadata.model);
       expect(result.metadata.maxTokens).toBe(context.metadata.maxTokens);
-      expect(result.metadata.customField).toBe('customValue');
+      expect((result.metadata as any).customField).toBe('customValue');
     });
   });
 
@@ -279,6 +272,26 @@ describe('BaseProcessor', () => {
       await processor.process(context);
 
       expect(processor.lastEmptyCheck).toBe(false);
+    });
+
+    it('should return true for non-string truthy values (object)', () => {
+      const processor = new MessageCheckingProcessor();
+      expect(processor.testIsEmptyMessage({ key: 'value' } as any)).toBe(true);
+    });
+
+    it('should return true for non-string truthy values (array)', () => {
+      const processor = new MessageCheckingProcessor();
+      expect(processor.testIsEmptyMessage(['hello'] as any)).toBe(true);
+    });
+
+    it('should return true for non-string truthy values (number)', () => {
+      const processor = new MessageCheckingProcessor();
+      expect(processor.testIsEmptyMessage(42 as any)).toBe(true);
+    });
+
+    it('should return true for boolean true', () => {
+      const processor = new MessageCheckingProcessor();
+      expect(processor.testIsEmptyMessage(true as any)).toBe(true);
     });
   });
 

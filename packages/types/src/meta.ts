@@ -2,18 +2,28 @@ import { z } from 'zod';
 
 export const LobeMetaDataSchema = z.object({
   /**
-   * 角色头像
+   * Character avatar
    */
   avatar: z.string().optional(),
   /**
-   *  背景色
+   *  Background color
    */
   backgroundColor: z.string().optional(),
   description: z.string().optional(),
+  /**
+   * Market agent identifier for published agents
+   */
+  marketIdentifier: z.string().optional(),
+  /**
+   * Personal name of an agent (e.g. "Alice", "小艾") — the identity it is
+   * addressed by, as opposed to `title`, which names the role it plays.
+   * Only agents carry it; other metadata holders leave it empty.
+   */
+  name: z.string().optional(),
 
   tags: z.array(z.string()).optional(),
   /**
-   * 名称
+   * Display label — for agents this is the role ("Health Assistant"), see `name`
    */
   title: z.string().optional(),
 });

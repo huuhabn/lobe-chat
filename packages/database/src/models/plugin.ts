@@ -1,46 +1,93 @@
-import { LobeTool } from '@lobechat/types';
-import { and, desc, eq } from 'drizzle-orm';
+import type { LobeTool } from '@lobechat/types';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 
-import { InstalledPluginItem, NewInstalledPlugin, userInstalledPlugins } from '../schemas';
-import { LobeChatDatabase } from '../type';
+import type { InstalledPluginItem, NewInstalledPlugin } from '../schemas';
+import { userInstalledPlugins } from '../schemas';
+import type { LobeChatDatabase } from '../type';
+import { buildWorkspaceWhere } from '../utils/workspace';
 
 export class PluginModel {
   private userId: string;
   private db: LobeChatDatabase;
+  private workspaceId?: string;
 
-  constructor(db: LobeChatDatabase, userId: string) {
+  constructor(db: LobeChatDatabase, userId: string, workspaceId?: string) {
     this.userId = userId;
     this.db = db;
+    this.workspaceId = workspaceId;
   }
+
+  private ownership = () =>
+    buildWorkspaceWhere(
+      { userId: this.userId, workspaceId: this.workspaceId },
+      userInstalledPlugins,
+    );
+
+  // Legacy evaluation installations are quarantined by server-owned provenance.
+  private visible = () =>
+    and(this.ownership(), sql`COALESCE(${userInstalledPlugins.source}, '') <> 'agent-eval'`);
 
   create = async (
     params: Pick<
       NewInstalledPlugin,
-      'type' | 'identifier' | 'manifest' | 'customParams' | 'settings'
+      'type' | 'identifier' | 'manifest' | 'customParams' | 'settings' | 'source'
     >,
   ) => {
-    const [result] = await this.db
-      .insert(userInstalledPlugins)
-      .values({ ...params, userId: this.userId })
-      .onConflictDoUpdate({
-        set: { ...params, updatedAt: new Date() },
-        target: [userInstalledPlugins.identifier, userInstalledPlugins.userId],
-      })
-      .returning();
-
-    return result;
+    return this.db.transaction(async (tx) => {
+      // Legacy eval installs share this table's (userId, identifier) primary key.
+      // Move only their storage key aside; keep the manifest, address and auth intact.
+      // Model-facing identifiers live in the frozen contract, independently of this key.
+      if (params.source !== 'agent-eval') {
+        await tx
+          .update(userInstalledPlugins)
+          .set({ identifier: `agent-eval:${crypto.randomUUID()}` })
+          .where(
+            and(
+              eq(userInstalledPlugins.userId, this.userId),
+              eq(userInstalledPlugins.identifier, params.identifier),
+              eq(userInstalledPlugins.source, 'agent-eval'),
+            ),
+          );
+      }
+      const [result] = await tx
+        .insert(userInstalledPlugins)
+        .values({ ...params, userId: this.userId, workspaceId: this.workspaceId ?? null })
+        .onConflictDoUpdate({
+          set: { ...params, updatedAt: new Date() },
+          target: [userInstalledPlugins.identifier, userInstalledPlugins.userId],
+        })
+        .returning();
+      return result;
+    });
   };
 
   delete = async (id: string) => {
     return this.db
       .delete(userInstalledPlugins)
+      .where(and(eq(userInstalledPlugins.identifier, id), this.visible()));
+  };
+
+  /**
+   * Remove the projection rows that mirror one Composio account, leaving the
+   * app's other projection rows. In a workspace every member's projection row
+   * is in scope, and a private connection is one member's: deleting by
+   * identifier ({@link delete}) would also drop a teammate's legacy
+   * connection of the same app.
+   */
+  deleteComposioMirrors = async (identifier: string, connectedAccountId: string) => {
+    return this.db
+      .delete(userInstalledPlugins)
       .where(
-        and(eq(userInstalledPlugins.identifier, id), eq(userInstalledPlugins.userId, this.userId)),
+        and(
+          eq(userInstalledPlugins.identifier, identifier),
+          this.visible(),
+          sql`${userInstalledPlugins.customParams} -> 'composio' ->> 'connectedAccountId' = ${connectedAccountId}`,
+        ),
       );
   };
 
   deleteAll = async () => {
-    return this.db.delete(userInstalledPlugins).where(eq(userInstalledPlugins.userId, this.userId));
+    return this.db.delete(userInstalledPlugins).where(this.ownership());
   };
 
   query = async () => {
@@ -56,7 +103,7 @@ export class PluginModel {
         updatedAt: userInstalledPlugins.updatedAt,
       })
       .from(userInstalledPlugins)
-      .where(eq(userInstalledPlugins.userId, this.userId))
+      .where(this.visible())
       .orderBy(desc(userInstalledPlugins.createdAt));
 
     return data.map<LobeTool>((item) => ({
@@ -65,12 +112,35 @@ export class PluginModel {
     }));
   };
 
+  /**
+   * The Composio projection rows in scope, newest first, with the user who
+   * wrote each. A workspace keeps one projection row per member for the same
+   * app, so a lookup by identifier ({@link findById}) picks an arbitrary one.
+   */
+  queryComposioMirrors = async (identifiers?: string[]) => {
+    if (identifiers?.length === 0) return [];
+
+    return this.db
+      .select({
+        customParams: userInstalledPlugins.customParams,
+        identifier: userInstalledPlugins.identifier,
+        manifest: userInstalledPlugins.manifest,
+        userId: userInstalledPlugins.userId,
+      })
+      .from(userInstalledPlugins)
+      .where(
+        and(
+          this.visible(),
+          sql`COALESCE(jsonb_exists(${userInstalledPlugins.customParams}, 'composio'), false)`,
+          identifiers ? inArray(userInstalledPlugins.identifier, identifiers) : undefined,
+        ),
+      )
+      .orderBy(desc(userInstalledPlugins.createdAt), userInstalledPlugins.userId);
+  };
+
   findById = async (id: string) => {
     return this.db.query.userInstalledPlugins.findFirst({
-      where: and(
-        eq(userInstalledPlugins.identifier, id),
-        eq(userInstalledPlugins.userId, this.userId),
-      ),
+      where: and(eq(userInstalledPlugins.identifier, id), this.visible()),
     });
   };
 
@@ -78,8 +148,6 @@ export class PluginModel {
     return this.db
       .update(userInstalledPlugins)
       .set({ ...value, updatedAt: new Date() })
-      .where(
-        and(eq(userInstalledPlugins.identifier, id), eq(userInstalledPlugins.userId, this.userId)),
-      );
+      .where(and(eq(userInstalledPlugins.identifier, id), this.visible()));
   };
 }

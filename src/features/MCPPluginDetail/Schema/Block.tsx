@@ -1,9 +1,9 @@
-import { Segmented, Tag } from '@lobehub/ui';
-import { ReactNode, memo } from 'react';
+import { Flexbox, Tabs, Tag } from '@lobehub/ui';
+import { type ReactNode } from 'react';
+import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Flexbox } from 'react-layout-kit';
 
-import Title from '../../../app/[variants]/(main)/discover/features/Title';
+import { styles } from './style';
 import { ModeType } from './types';
 
 interface BlockProps {
@@ -19,29 +19,33 @@ interface BlockProps {
 const Block = memo<BlockProps>(({ title, count, desc, children, mode, setMode, id }) => {
   const { t } = useTranslation('discover');
   return (
-    <Flexbox gap={8}>
-      <Flexbox align={'center'} gap={12} horizontal justify={'space-between'}>
-        <Title id={id} tag={<Tag>{count}</Tag>}>
-          {title}
-        </Title>
-        <Segmented
-          onChange={(v) => setMode?.(v as ModeType)}
-          options={[
+    <Flexbox gap={12}>
+      <Flexbox horizontal align={'center'} gap={12} justify={'space-between'}>
+        <Flexbox horizontal align={'center'} flex={'none'} gap={8}>
+          <h2 className={styles.sectionTitle} id={id}>
+            {title}
+          </h2>
+          <Tag>{count}</Tag>
+        </Flexbox>
+        <Tabs
+          activeKey={mode}
+          style={{ flex: 'none', width: 'auto' }}
+          items={[
             {
+              key: ModeType.Docs,
               label: t('mcp.details.schema.mode.docs'),
-              value: ModeType.Docs,
             },
             {
+              key: ModeType.JSON,
               label: 'JSON',
-              value: ModeType.JSON,
             },
           ]}
-          shape={'round'}
-          value={mode}
-          variant={'outlined'}
+          onChange={(key) => setMode?.(key as ModeType)}
         />
       </Flexbox>
-      <p style={{ marginBottom: 24 }}>{desc}</p>
+      <p className={styles.sectionDesc} style={{ marginTop: -6 }}>
+        {desc}
+      </p>
       {children}
     </Flexbox>
   );

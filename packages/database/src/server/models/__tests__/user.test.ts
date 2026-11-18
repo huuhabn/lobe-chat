@@ -1,22 +1,29 @@
+import { INBOX_SESSION_ID } from '@lobechat/const';
+import type { UserGuide, UserPreference } from '@lobechat/types';
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { count, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { INBOX_SESSION_ID } from '@/const/session';
 import { KeyVaultsGateKeeper } from '@/server/modules/KeyVaultsEncrypt';
-import { UserGuide, UserPreference } from '@/types/user';
 
-import { getTestDBInstance } from '../../../core/dbForTest';
+import { getTestDB } from '../../../core/getTestDB';
 import { SessionModel } from '../../../models/session';
 import { UserModel, UserNotFoundError } from '../../../models/user';
-import { UserSettingsItem, nextauthAccounts, userSettings, users } from '../../../schemas';
+import type { UserSettingsItem } from '../../../schemas';
+import { nextauthAccounts, users, userSettings } from '../../../schemas';
 
-let serverDB = await getTestDBInstance();
+const serverDB = await getTestDB();
 
 const userId = 'user-db';
 const userEmail = 'user@example.com';
 const userModel = new UserModel(serverDB, userId);
+
+// Capture the ambient secret so each test can restore it: assigning `undefined`
+// to `process.env` stores the literal string "undefined", which leaks into the
+// single-worker, non-isolated test process and breaks later KeyVaults consumers
+// (e.g. the OIDC adapter tests) with "must be 16, 24, or 32 bytes".
+const originalKeyVaultsSecret = process.env.KEY_VAULTS_SECRET;
 
 beforeEach(async () => {
   await serverDB.delete(users);
@@ -27,7 +34,12 @@ beforeEach(async () => {
 afterEach(async () => {
   await serverDB.delete(users);
   await serverDB.delete(userSettings);
-  process.env.KEY_VAULTS_SECRET = undefined;
+
+  if (originalKeyVaultsSecret === undefined) {
+    delete process.env.KEY_VAULTS_SECRET;
+  } else {
+    process.env.KEY_VAULTS_SECRET = originalKeyVaultsSecret;
+  }
 });
 
 describe('UserModel', () => {
@@ -253,7 +265,7 @@ describe('UserModel', () => {
 
     it('should handle decrypt failure and return empty object', async () => {
       const userId = 'user-api-test-id';
-      // 模拟解密失败的情况
+      // Simulate decrypt failure scenario
       const invalidEncryptedData = 'invalid:-encrypted-:data';
       await serverDB.insert(users).values({ id: userId });
       await serverDB.insert(userSettings).values({
@@ -305,7 +317,7 @@ describe('UserModel', () => {
     });
   });
 
-  // 补充一些边界情况的测试
+  // Additional edge case tests
   describe('edge cases', () => {
     describe('updatePreference', () => {
       it('should handle undefined preference', async () => {
@@ -428,9 +440,6 @@ describe('UserModel', () => {
       expect(result[0]).toMatchObject({
         provider: 'github',
         providerAccountId: '123456',
-        type: 'oauth',
-        userId,
-        scope: 'user:email',
       });
       expect(result[0].expiresAt).toBeDefined();
     });

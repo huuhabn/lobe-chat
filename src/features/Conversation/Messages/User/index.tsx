@@ -1,198 +1,219 @@
-import { ChatMessage } from '@lobechat/types';
-import { Tag } from '@lobehub/ui';
-import { useResponsive } from 'antd-style';
-import { ReactNode, memo, useCallback, useMemo } from 'react';
+import { agentDisplayName } from '@lobechat/types';
+import { Flexbox, Tag } from '@lobehub/ui';
+import isEqual from 'fast-deep-equal';
+import { type MouseEventHandler } from 'react';
+import { memo, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Flexbox } from 'react-layout-kit';
 
-import Avatar from '@/features/ChatItem/components/Avatar';
-import BorderSpacing from '@/features/ChatItem/components/BorderSpacing';
-import MessageContent from '@/features/ChatItem/components/MessageContent';
-import Title from '@/features/ChatItem/components/Title';
-import { useStyles } from '@/features/ChatItem/style';
-import { markdownElements } from '@/features/Conversation/MarkdownElements';
+import { useActiveWorkspaceId } from '@/business/client/hooks/useActiveWorkspaceId';
+import { ChatItem } from '@/features/Conversation/ChatItem';
+import { getMcpEventSource } from '@/features/Conversation/Markdown/plugins/McpEvent/parseMcpEvent';
+import { getScmEventSource } from '@/features/Conversation/Markdown/plugins/ScmEvent/parseScmEvent';
+import { getWebhookEventSource } from '@/features/Conversation/Markdown/plugins/WebhookEvent/parseWebhookEvent';
+import { useMessageCommentCount } from '@/features/TopicComment/hooks';
+import MessageCommentBadge from '@/features/TopicComment/MessageCommentBadge';
 import { useUserAvatar } from '@/hooks/useUserAvatar';
-import { useAgentStore } from '@/store/agent';
-import { agentChatConfigSelectors } from '@/store/agent/selectors';
-import { useChatStore } from '@/store/chat';
-import { chatSelectors } from '@/store/chat/selectors';
 import { useSessionStore } from '@/store/session';
 import { sessionSelectors } from '@/store/session/selectors';
 import { useUserStore } from '@/store/user';
 import { userProfileSelectors } from '@/store/user/selectors';
 
 import { useDoubleClickEdit } from '../../hooks/useDoubleClickEdit';
-import { UserActionsBar } from './Actions';
-import { UserBelowMessage } from './BelowMessage';
+import { dataSelectors, messageStateSelectors, useConversationStore } from '../../store';
+import {
+  useSetMessageItemActionElementPortialContext,
+  useSetMessageItemActionTypeContext,
+} from '../Contexts/message-action-context';
+import Actions from './Actions';
+import AgentSenderSourceLink from './components/AgentSenderSourceLink';
+import { McpEventAvatar, McpEventSenderTitle } from './components/McpEventSender';
+import UserMessageContent from './components/MessageContent';
+import { ScmEventAvatar, ScmEventSenderTitle } from './components/ScmEventSender';
+import { WebhookEventAvatar, WebhookEventSenderTitle } from './components/WebhookEventSender';
 import { UserMessageExtra } from './Extra';
-import { MarkdownRender as UserMarkdownRender } from './MarkdownRender';
-import { UserMessageContent } from './MessageContent';
+import { McpAppSourceFooter } from './McpAppSourceFooter';
+import { getAgentSender, getBotSender, resolveSenderIdentity } from './resolveSenderIdentity';
+import ScheduledRunFooter from './ScheduledRunFooter';
+import {
+  SubAgentSenderTags,
+  SubAgentThreadLink,
+  useSubAgentSenderIdentity,
+} from './SubAgentSender';
 
-interface UserMessageProps extends ChatMessage {
+interface UserMessageProps {
   disableEditing?: boolean;
+  id: string;
   index: number;
 }
 
-const rehypePlugins = markdownElements
-  .filter((s) => s.scope !== 'assistant')
-  .map((element) => element.rehypePlugin)
-  .filter(Boolean);
-
-const remarkPlugins = markdownElements
-  .filter((s) => s.scope !== 'assistant')
-  .map((element) => element.remarkPlugin)
-  .filter(Boolean);
-
-const UserMessage = memo<UserMessageProps>((props) => {
-  const {
-    id,
-    ragQuery,
-    content,
-    createdAt,
-    error,
-    role,
-    index,
-    extra,
-    disableEditing,
-    targetId,
-  } = props;
+const UserMessage = memo<UserMessageProps>(({ id, disableEditing, index }) => {
+  const item = useConversationStore(dataSelectors.getDisplayMessageById(id), isEqual)!;
+  const { content, createdAt, error, role, extra, targetId, sender, metadata } = item;
+  const botSender = getBotSender(item);
+  // An agent → agent turn (a sibling agent's `lh agent run`): the row belongs to
+  // the receiving agent's topic, so the sending agent — not the human owner —
+  // is who the bubble must be attributed to.
+  const agentSender = getAgentSender(item);
+  // A wake-up message from the SCM integration is authored by the pull
+  // request, so GitHub takes the sender slot instead of the card's header.
+  const scmSource = useMemo(() => getScmEventSource(content), [content]);
+  // Same for an MCP event subscription: the connector the event came from is
+  // the sender.
+  const mcpSource = useMemo(() => getMcpEventSource(content), [content]);
+  // And for a generic webhook call: the webhook is the sender.
+  const webhookSource = useMemo(() => getWebhookEventSource(content), [content]);
+  // A background sub-agent reporting back speaks in a user turn of its own.
+  const subAgentCallback = metadata?.subAgentCallback;
+  const subAgentSender = useSubAgentSenderIdentity(subAgentCallback);
+  const editingDisabled = disableEditing || !!subAgentCallback;
 
   const { t } = useTranslation('chat');
-  const { mobile } = useResponsive();
-  const avatar = useUserAvatar();
-  const title = useUserStore(userProfileSelectors.displayUserName);
+  const selfAvatar = useUserAvatar();
+  const selfTitle = useUserStore(userProfileSelectors.displayUserName);
+  const activeWorkspaceId = useActiveWorkspaceId();
+  const { count: commentCount, topicId: commentTopicId } = useMessageCommentCount(id);
 
-  const displayMode = useAgentStore(agentChatConfigSelectors.displayMode);
+  // In workspaces every user bubble shows its sender avatar so ownership is
+  // visible even during single-user testing; personal mode keeps the legacy
+  // hidden-avatar behavior. Self identity applies only to the viewer's own
+  // rows — see resolveSenderIdentity.
+  // A bot-channel row is authored by someone else even in personal mode, so
+  // its sender is always shown. Same for an agent → agent turn and a
+  // background sub-agent's report.
+  const showSender =
+    Boolean(activeWorkspaceId) ||
+    !!botSender ||
+    !!scmSource ||
+    !!mcpSource ||
+    !!agentSender ||
+    !!subAgentSender;
+  const currentUserId = useUserStore(userProfileSelectors.userId);
+  const { avatar, title } = resolveSenderIdentity({
+    currentUserId,
+    message: item,
+    selfAvatar,
+    selfTitle,
+    sender,
+    subAgentSender,
+    unknownLabel: t('sender.unknownMember'),
+  });
 
-  const [editing, generating, isInRAGFlow] = useChatStore((s) => [
-    chatSelectors.isMessageEditing(id)(s),
-    chatSelectors.isMessageGenerating(id)(s),
-    chatSelectors.isMessageInRAGFlow(id)(s),
-  ]);
+  // Get editing and loading state from ConversationStore
+  const editing = useConversationStore(messageStateSelectors.isMessageEditing(id));
 
-  const loading = isInRAGFlow || generating;
-  
   // Get target name for DM indicator
   const userName = useUserStore(userProfileSelectors.nickName) || 'User';
   const agents = useSessionStore(sessionSelectors.currentGroupAgents);
-  
+
   const dmIndicator = useMemo(() => {
     if (!targetId) return undefined;
-    
-    let targetName = targetId;
-    if (targetId === 'user') {
-      targetName = userName;
-    } else {
-      const targetAgent = agents?.find((agent) => agent.id === targetId);
-      targetName = targetAgent?.title || targetId;
-    }
-    
+
+    const targetName =
+      targetId === 'user'
+        ? userName
+        : agentDisplayName(
+            agents?.find((agent) => agent.id === targetId),
+            targetId,
+          );
+
     return <Tag>{t('dm.visibleTo', { target: targetName })}</Tag>;
   }, [targetId, userName, agents, t]);
 
-  const placement = displayMode === 'chat' ? 'right' : 'left';
-  const variant = displayMode === 'chat' ? 'bubble' : 'docs';
+  const onDoubleClick = useDoubleClickEdit({ disableEditing: editingDisabled, error, id, role });
 
-  const { styles } = useStyles({
-    editing,
-    placement,
-    primary: true,
-    showTitle: false,
-    time: createdAt,
-    title,
-    variant,
-  });
+  const setMessageItemActionElementPortialContext = useSetMessageItemActionElementPortialContext();
+  const setMessageItemActionTypeContext = useSetMessageItemActionTypeContext();
 
-  const onDoubleClick = useDoubleClickEdit({ disableEditing, error, id, index, role });
-
-  const renderMessage = useCallback(
-    (editableContent: ReactNode) => (
-      <UserMessageContent {...props} editableContent={editableContent} />
-    ),
-    [props],
-  );
-
-  const components = useMemo(
-    () =>
-      Object.fromEntries(
-        markdownElements.map((element) => {
-          const Component = element.Component;
-
-          return [element.tag, (props: any) => <Component {...props} id={id} />];
-        }),
-      ),
-    [id],
-  );
-
-  const markdownProps = useMemo(
-    () => ({
-      components,
-      customRender: (dom: ReactNode, { text }: { text: string }) => (
-        <UserMarkdownRender displayMode={displayMode} dom={dom} id={id} text={text} />
-      ),
-      rehypePlugins,
-      remarkPlugins,
-    }),
-    [displayMode],
+  const onMouseEnter: MouseEventHandler<HTMLDivElement> = useCallback(
+    (e) => {
+      if (editingDisabled) return;
+      setMessageItemActionElementPortialContext(e.currentTarget);
+      setMessageItemActionTypeContext({ id, index, type: 'user' });
+    },
+    [
+      editingDisabled,
+      id,
+      index,
+      setMessageItemActionElementPortialContext,
+      setMessageItemActionTypeContext,
+    ],
   );
 
   return (
-    <Flexbox
-      className={styles.container}
-      direction={placement === 'left' ? 'horizontal' : 'horizontal-reverse'}
-      gap={mobile ? 6 : 12}
+    <ChatItem
+      actions={<Actions data={item} disableEditing={editingDisabled} id={id} />}
+      avatar={{ avatar, title }}
+      editing={editing}
+      id={id}
+      message={content}
+      messageExtra={<UserMessageExtra extra={extra} id={id} />}
+      placement={'right'}
+      showAvatar={showSender}
+      showTitle={showSender && !scmSource && !mcpSource}
+      time={createdAt}
+      actionAddon={
+        commentCount > 0 && commentTopicId ? (
+          <MessageCommentBadge count={commentCount} messageId={id} topicId={commentTopicId} />
+        ) : undefined
+      }
+      belowMessage={
+        <>
+          {subAgentCallback && <SubAgentThreadLink callback={subAgentCallback} />}
+          {metadata?.mcpAppSource && <McpAppSourceFooter source={metadata.mcpAppSource} />}
+          <ScheduledRunFooter id={id} />
+        </>
+      }
+      customAvatarRender={
+        scmSource
+          ? () => <ScmEventAvatar />
+          : mcpSource
+            ? () => <McpEventAvatar source={mcpSource} />
+            : webhookSource
+              ? () => <WebhookEventAvatar />
+              : undefined
+      }
+      headerAddon={
+        scmSource ? (
+          <ScmEventSenderTitle source={scmSource} />
+        ) : mcpSource ? (
+          <McpEventSenderTitle source={mcpSource} />
+        ) : webhookSource ? (
+          <WebhookEventSenderTitle source={webhookSource} />
+        ) : undefined
+      }
+      titleAddon={
+        subAgentCallback ? (
+          <SubAgentSenderTags callback={subAgentCallback} />
+        ) : dmIndicator || agentSender?.topicId ? (
+          <>
+            {dmIndicator}
+            {agentSender?.topicId && (
+              <AgentSenderSourceLink
+                chatGroupId={agentSender.chatGroupId}
+                threadId={agentSender.threadId}
+                topicAgentId={agentSender.topicAgentId ?? agentSender.agentId}
+                topicId={agentSender.topicId}
+                topicTitle={agentSender.topicTitle}
+              />
+            )}
+          </>
+        ) : undefined
+      }
+      onDoubleClick={onDoubleClick}
+      onMouseEnter={onMouseEnter}
     >
-      <Avatar
-        alt={title}
-        avatar={{ avatar, title }}
-        loading={loading}
-        placement={placement}
-        size={mobile ? 32 : undefined}
-        style={{ marginTop: 6 }}
-      />
-      <Flexbox
-        align={placement === 'left' ? 'flex-start' : 'flex-end'}
-        className={styles.messageContainer}
-      >
-        <Title
-          avatar={{ avatar, title }}
-          placement={placement}
-          showTitle={false}
-          time={createdAt}
-          titleAddon={dmIndicator}
-        />
-        <Flexbox
-          align={placement === 'left' ? 'flex-start' : 'flex-end'}
-          className={styles.messageContent}
-          direction={placement === 'left' ? 'horizontal' : 'horizontal-reverse'}
-          gap={8}
-        >
-          <Flexbox flex={1} style={{ minWidth: 0 }}>
-            <MessageContent
-              editing={editing}
-              id={id}
-              markdownProps={markdownProps}
-              message={content}
-              messageExtra={<UserMessageExtra content={content} extra={extra} id={id} />}
-              onDoubleClick={onDoubleClick}
-              placement={placement}
-              primary
-              renderMessage={renderMessage}
-              variant={variant}
-            />
-          </Flexbox>
-
-          {!disableEditing && !editing && (
-            <Flexbox align={'flex-start'} className={styles.actions} role="menubar">
-              <UserActionsBar data={props} id={id} index={index} />
-            </Flexbox>
-          )}
+      {metadata?.steer ? (
+        // The steer tag labels the instruction itself, so it sits inside the
+        // bubble rather than in the sender header.
+        <Flexbox align={'flex-start'} gap={4}>
+          <Tag>{t('steer.tag')}</Tag>
+          <UserMessageContent {...item} />
         </Flexbox>
-        <UserBelowMessage content={content} id={id} ragQuery={ragQuery} />
-      </Flexbox>
-      {mobile && variant === 'bubble' && <BorderSpacing borderSpacing={32} />}
-    </Flexbox>
+      ) : (
+        <UserMessageContent {...item} />
+      )}
+    </ChatItem>
   );
-});
+}, isEqual);
 
 export default UserMessage;

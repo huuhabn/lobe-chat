@@ -1,5 +1,6 @@
-import { getPort } from 'get-port-please';
 import { createServer } from 'node:http';
+
+import { getPort } from 'get-port-please';
 
 import { LOCAL_STORAGE_URL_PREFIX } from '@/const/dir';
 import FileService from '@/services/fileSrv';
@@ -9,21 +10,34 @@ import type { App } from '../App';
 
 const logger = createLogger('core:StaticFileServerManager');
 
+const getAllowedOrigin = (rawOrigin?: string) => {
+  if (!rawOrigin) return '*';
+
+  try {
+    const url = new URL(rawOrigin);
+    const normalizedOrigin = `${url.protocol}//${url.host}`;
+    return url.hostname === 'localhost' || url.hostname === '127.0.0.1' ? normalizedOrigin : '*';
+  } catch {
+    const normalizedOrigin = rawOrigin.replace(/\/$/, '');
+    return normalizedOrigin.includes('localhost') || normalizedOrigin.includes('127.0.0.1')
+      ? normalizedOrigin
+      : '*';
+  }
+};
+
 export class StaticFileServerManager {
-  private app: App;
   private fileService: FileService;
   private httpServer: any = null;
   private serverPort: number = 0;
   private isInitialized = false;
 
   constructor(app: App) {
-    this.app = app;
     this.fileService = app.getService(FileService);
     logger.debug('StaticFileServerManager initialized');
   }
 
   /**
-   * 初始化静态文件管理器
+   * Initialize the static file manager
    */
   async initialize(): Promise<void> {
     if (this.isInitialized) {
@@ -34,7 +48,7 @@ export class StaticFileServerManager {
     logger.info('Initializing StaticFileServerManager');
 
     try {
-      // 启动 HTTP 文件服务器
+      // Start the HTTP file server
       await this.startHttpServer();
 
       this.isInitialized = true;
@@ -48,17 +62,17 @@ export class StaticFileServerManager {
   }
 
   /**
-   * 启动 HTTP 文件服务器
+   * Start the HTTP file server
    */
   private async startHttpServer(): Promise<void> {
     try {
-      // 使用 get-port-please 获取可用端口
+      // Use get-port-please to find an available port
       this.serverPort = await getPort({
-        // 备用端口
+        // Fallback port
         host: '127.0.0.1',
 
         port: 33_250,
-        // 首选端口
+        // Preferred ports
         ports: [33_251, 33_252, 33_253, 33_254, 33_255],
       });
 
@@ -66,7 +80,7 @@ export class StaticFileServerManager {
 
       return new Promise((resolve, reject) => {
         const server = createServer(async (req, res) => {
-          // 设置请求超时
+          // Set request timeout
           req.setTimeout(30_000, () => {
             logger.warn('Request timeout, closing connection');
             if (!res.destroyed && !res.headersSent) {
@@ -75,7 +89,7 @@ export class StaticFileServerManager {
             }
           });
 
-          // 监听客户端断开连接
+          // Listen for client disconnection
           req.on('close', () => {
             logger.debug('Client disconnected during request processing');
           });
@@ -85,7 +99,7 @@ export class StaticFileServerManager {
           } catch (error) {
             logger.error('Unhandled error in HTTP request handler:', error);
 
-            // 尝试发送错误响应，但确保不会导致进一步错误
+            // Attempt to send error response, but ensure it does not cause further errors
             try {
               if (!res.destroyed && !res.headersSent) {
                 res.writeHead(500, { 'Content-Type': 'text/plain' });
@@ -97,7 +111,7 @@ export class StaticFileServerManager {
           }
         });
 
-        // 监听指定端口
+        // Listen on the specified port
         server.listen(this.serverPort, '127.0.0.1', () => {
           this.httpServer = server;
           logger.info(`HTTP file server started on port ${this.serverPort}`);
@@ -116,26 +130,48 @@ export class StaticFileServerManager {
   }
 
   /**
-   * 处理 HTTP 请求
+   * Handle HTTP requests
    */
   private async handleHttpRequest(req: any, res: any): Promise<void> {
     try {
-      // 检查响应是否已经结束
+      // Check if the response has already ended
       if (res.destroyed || res.headersSent) {
         logger.warn('Response already ended, skipping request processing');
         return;
       }
 
+      // Get the request Origin and set CORS
+      const origin = req.headers.origin || req.headers.referer;
+      const allowedOrigin = getAllowedOrigin(origin);
+
+      // Handle CORS preflight requests
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204, {
+          'Access-Control-Allow-Headers': 'Content-Type',
+          'Access-Control-Allow-Methods': 'GET, OPTIONS',
+          'Access-Control-Allow-Origin': allowedOrigin,
+          'Access-Control-Max-Age': '86400',
+        });
+        res.end();
+        return;
+      }
+
       const url = new URL(req.url, `http://127.0.0.1:${this.serverPort}`);
       logger.debug(`Processing HTTP file request: ${req.url}`);
+      logger.debug(`Request method: ${req.method}`);
+      logger.debug(`Request headers: ${JSON.stringify(req.headers)}`);
 
-      // 提取文件路径：从 /desktop-file/path/to/file.png 中提取相对路径
-      let filePath = decodeURIComponent(url.pathname.slice(1)); // 移除开头的 /
+      // Extract file path: extract the relative path from /desktop-file/path/to/file.png
+      let filePath = decodeURIComponent(url.pathname.slice(1)); // Remove the leading /
+      logger.debug(`Initial file path after decode: ${filePath}`);
 
-      // 如果路径以 desktop-file/ 开头，则移除该前缀
-      const prefixWithoutSlash = LOCAL_STORAGE_URL_PREFIX.slice(1) + '/'; // 移除开头的 / 并添加结尾的 /
+      // If the path starts with desktop-file/, remove that prefix
+      const prefixWithoutSlash = LOCAL_STORAGE_URL_PREFIX.slice(1) + '/'; // Remove the leading / and add a trailing /
+      logger.debug(`Prefix to remove: ${prefixWithoutSlash}`);
+
       if (filePath.startsWith(prefixWithoutSlash)) {
         filePath = filePath.slice(prefixWithoutSlash.length);
+        logger.debug(`File path after removing prefix: ${filePath}`);
       }
 
       if (!filePath) {
@@ -147,42 +183,55 @@ export class StaticFileServerManager {
         return;
       }
 
-      // 使用 FileService 获取文件
-      const fileResult = await this.fileService.getFile(`desktop://${filePath}`);
+      // Use FileService to retrieve the file
+      const desktopPath = `desktop://${filePath}`;
+      logger.debug(`Attempting to get file: ${desktopPath}`);
+      const fileResult = await this.fileService.getFile(desktopPath);
+      logger.debug(
+        `File retrieved successfully, mime type: ${fileResult.mimeType}, size: ${fileResult.content.byteLength} bytes`,
+      );
 
-      // 再次检查响应状态
+      // Check the response status again
       if (res.destroyed || res.headersSent) {
         logger.warn('Response ended during file processing');
         return;
       }
 
-      // 设置响应头
+      // Set response headers
       res.writeHead(200, {
-        // 缓存一年
-        'Access-Control-Allow-Origin': 'http://localhost:*',
-
+        'Access-Control-Allow-Origin': allowedOrigin,
         'Cache-Control': 'public, max-age=31536000',
-        // 允许 localhost 的任意端口
         'Content-Length': Buffer.byteLength(fileResult.content),
         'Content-Type': fileResult.mimeType,
       });
 
-      // 发送文件内容
+      // Send file content
       res.end(Buffer.from(fileResult.content));
 
       logger.debug(`HTTP file served successfully: desktop://${filePath}`);
     } catch (error) {
       logger.error(`Error serving HTTP file: ${error}`);
+      logger.error(`Error stack: ${error.stack}`);
 
-      // 检查响应是否仍然可写
+      // Check if the response is still writable
       if (!res.destroyed && !res.headersSent) {
         try {
-          // 判断是否是文件未找到错误
+          // Get the request Origin and set CORS (error responses also need this!)
+          const origin = req.headers.origin || req.headers.referer;
+          const allowedOrigin = getAllowedOrigin(origin);
+
+          // Determine whether it is a file not found error
           if (error.name === 'FileNotFoundError') {
-            res.writeHead(404, { 'Content-Type': 'text/plain' });
+            res.writeHead(404, {
+              'Access-Control-Allow-Origin': allowedOrigin,
+              'Content-Type': 'text/plain',
+            });
             res.end('File Not Found');
           } else {
-            res.writeHead(500, { 'Content-Type': 'text/plain' });
+            res.writeHead(500, {
+              'Access-Control-Allow-Origin': allowedOrigin,
+              'Content-Type': 'text/plain',
+            });
             res.end('Internal Server Error');
           }
         } catch (writeError) {
@@ -195,7 +244,7 @@ export class StaticFileServerManager {
   }
 
   /**
-   * 获取文件服务器域名
+   * Get file server domain
    */
   getFileServerDomain(): string {
     if (!this.isInitialized || !this.serverPort) {
@@ -207,7 +256,7 @@ export class StaticFileServerManager {
   }
 
   /**
-   * 销毁静态文件管理器
+   * Destroy the static file manager
    */
   destroy() {
     logger.info('Destroying StaticFileServerManager');

@@ -1,11 +1,23 @@
-import { ChatMessage } from '@lobechat/types';
+import type { UIChatMessage } from '@lobechat/types';
 
 /**
- * 智能体状态 - 从原项目类型推断
+ * Consumer-side metadata extensions for PipelineContext.metadata.
+ *
+ * Example:
+ * declare module '@lobechat/context-engine' {
+ *   interface PipelineContextMetadataOverrides {
+ *     myCustomFlag?: boolean;
+ *   }
+ * }
+ */
+export interface PipelineContextMetadataOverrides {}
+
+/**
+ * Agent state - inferred from original project types
  */
 export interface AgentState {
   [key: string]: any;
-  messages: ChatMessage[];
+  messages: UIChatMessage[];
   model?: string;
   provider?: string;
   systemRole?: string;
@@ -13,7 +25,7 @@ export interface AgentState {
 }
 
 /**
- * 聊天图像项
+ * Chat image item
  */
 export interface ChatImageItem {
   alt?: string;
@@ -22,7 +34,7 @@ export interface ChatImageItem {
 }
 
 /**
- * 消息工具调用
+ * Message tool call
  */
 export interface MessageToolCall {
   function: {
@@ -30,81 +42,93 @@ export interface MessageToolCall {
     name: string;
   };
   id: string;
+  thoughtSignature?: string;
   type: 'function';
 }
 export interface Message {
   [key: string]: any;
   content: string | any[];
+  /**
+   * Set when a role conversion folded a tool result into another role's content
+   * (see GroupRoleTransformProcessor). The message is no longer `role: 'tool'`,
+   * but its content is still a verbatim record of what a tool returned, so
+   * processors that key off the tool role must keep treating it as one.
+   */
+  foldedToolResult?: { apiName?: string; identifier?: string };
   role: string;
 }
 
 /**
- * 管道上下文 - 在管道中流动的核心数据结构
+ * Metadata shared across pipeline processors.
+ * Consumers can extend this through declaration merging on
+ * `LobeChatContextEngine.PipelineContextMetadataOverrides`.
  */
-export interface PipelineContext {
-  /** 中止原因 */
-  abortReason?: string;
-
-  /** 不可变的输入状态 */
-  readonly initialState: AgentState;
-
-  /** 允许处理器提前终止管道 */
-  isAborted: boolean;
-
-  /** 正在构建的可变消息列表 */
-  messages: Message[];
-  /** 处理器间通信的元数据 */
-  metadata: {
-    /** 其他自定义元数据 */
-    [key: string]: any;
-    /** 当前 token 估算值 */
-    currentTokenCount?: number;
-    /** 最大 token 限制 */
-    maxTokens: number;
-    /** 模型标识 */
-    model: string;
-  };
+export interface PipelineContextMetadata extends PipelineContextMetadataOverrides {
+  [key: `${string}InjectedCount`]: number | undefined;
+  currentTokenCount?: number;
+  maxTokens?: number;
+  model?: string;
+  provider?: string;
 }
 
 /**
- * 上下文处理器接口 - 管道中处理站的标准化接口
+ * Pipeline context - core data structure flowing through the pipeline
+ */
+export interface PipelineContext {
+  /** Abort reason */
+  abortReason?: string;
+
+  /** Immutable input state */
+  readonly initialState: AgentState;
+
+  /** Allow processors to terminate pipeline early */
+  isAborted: boolean;
+
+  /** Mutable message list being built */
+  messages: Message[];
+  /** Metadata for communication between processors */
+  metadata: PipelineContextMetadata;
+}
+
+/**
+ * Context processor interface - standardized interface for processing stations in the pipeline
  */
 export interface ContextProcessor {
-  /** 处理器名称，用于调试和日志 */
+  /** Processor name, used for debugging and logging */
   name: string;
-  /** 核心处理方法 */
+  /** Core processing method */
   process: (context: PipelineContext) => Promise<PipelineContext>;
 }
 
 /**
- * 处理器配置选项
+ * Processor configuration options
  */
 export interface ProcessorOptions {
-  /** 是否启用调试模式 */
+  /** Whether to enable debug mode */
   debug?: boolean;
-  /** 自定义日志函数 */
+  /** Custom logging function */
   logger?: (message: string, level?: 'info' | 'warn' | 'error') => void;
 }
 
 /**
- * 管道执行结果
+ * Pipeline execution result
  */
 export interface PipelineResult {
-  /** 中止原因 */
+  /** Abort reason */
   abortReason?: string;
-  /** 是否被中止 */
+  /** Whether aborted */
   isAborted: boolean;
-  /** 最终处理的消息 */
+  /** Final processed messages */
   messages: any[];
-  /** 处理过程中的元数据 */
-  metadata: Record<string, any>;
-  /** 执行统计 */
+  /** Metadata from processing */
+  metadata: PipelineContextMetadata;
+  /** Execution statistics */
   stats: {
-    /** 处理的处理器数量 */
+    /** Number of processors processed */
     processedCount: number;
-    /** 各处理器执行时间 */
+    /** Execution time for each processor */
     processorDurations: Record<string, number>;
-    /** 总处理时间 */
+    /** Total processing time */
     totalDuration: number;
   };
 }
@@ -119,21 +143,17 @@ export enum ProcessorType {
 
 /** Legacy processor type - kept for backward compatibility */
 export type ProcessorTypeLegacy =
-  | 'injector'
-  | 'transformer'
-  | 'validator'
-  | 'optimizer'
-  | 'processor';
+  'injector' | 'transformer' | 'validator' | 'optimizer' | 'processor';
 
 /**
- * Token 计数器接口
+ * Token counter interface
  */
 export interface TokenCounter {
-  count: (messages: ChatMessage[] | string) => Promise<number>;
+  count: (messages: UIChatMessage[] | string) => Promise<number>;
 }
 
 /**
- * 文件上下文信息
+ * File context information
  */
 export interface FileContext {
   addUrl?: boolean;
@@ -142,7 +162,7 @@ export interface FileContext {
 }
 
 /**
- * RAG 检索块
+ * RAG retrieval chunk
  */
 export interface RetrievalChunk {
   content: string;
@@ -152,7 +172,7 @@ export interface RetrievalChunk {
 }
 
 /**
- * RAG 上下文
+ * RAG context
  */
 export interface RAGContext {
   chunks: RetrievalChunk[];
@@ -161,7 +181,7 @@ export interface RAGContext {
 }
 
 /**
- * 模型能力
+ * Model capabilities
  */
 export interface ModelCapabilities {
   supportsFunctionCall: boolean;
@@ -171,31 +191,75 @@ export interface ModelCapabilities {
 }
 
 /**
- * 处理器错误
+ * Processor error — carries diagnostic context about which processor failed and why.
+ *
+ * The `cause` chain follows the ES2022 standard so that error-reporting tooling
+ * (Sentry, DataDog, dashboard log viewers) can walk the full causal chain without
+ * custom deserialisation.  The legacy `originalError` property is kept for
+ * backwards compatibility with existing catch sites that destructure it directly.
  */
 export class ProcessorError extends Error {
+  /** @deprecated Prefer reading the standard `cause` property. */
+  public originalError?: Error;
+
   constructor(
     public processorName: string,
     message: string,
-    public originalError?: Error,
+    cause?: Error,
   ) {
-    super(`[${processorName}] ${message}`);
+    super(`[${processorName}] ${message}`, { cause });
     this.name = 'ProcessorError';
+    this.originalError = cause;
+  }
+
+  /** Serialise the full causal chain so log aggregators can ingest it. */
+  toJSON(): Record<string, unknown> {
+    return {
+      message: this.message,
+      name: this.name,
+      processorName: this.processorName,
+      cause: this.cause
+        ? this.cause instanceof Error && typeof (this.cause as any).toJSON === 'function'
+          ? (this.cause as any).toJSON()
+          : String(this.cause)
+        : undefined,
+    };
   }
 }
 
 /**
- * 管道错误
+ * Pipeline error — thrown when a pipeline processor fails.
+ *
+ * Same design principles as {@link ProcessorError}: standard `cause` chain,
+ * legacy `originalError` compatibility, and a `toJSON()` that preserves the
+ * full error tree.
  */
 export class PipelineError extends Error {
+  /** @deprecated Prefer reading the standard `cause` property. */
+  public originalError?: Error;
+
   constructor(
     message: string,
     public processorName?: string,
-    public originalError?: Error,
+    cause?: Error,
   ) {
-    super(message);
+    super(message, { cause });
     this.name = 'PipelineError';
+    this.originalError = cause;
+  }
+
+  toJSON(): Record<string, unknown> {
+    return {
+      message: this.message,
+      name: this.name,
+      processorName: this.processorName,
+      cause: this.cause
+        ? this.cause instanceof Error && typeof (this.cause as any).toJSON === 'function'
+          ? (this.cause as any).toJSON()
+          : String(this.cause)
+        : undefined,
+    };
   }
 }
 
-export type { ChatMessage } from '@lobechat/types';
+export type { UIChatMessage } from '@lobechat/types';

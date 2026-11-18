@@ -1,8 +1,8 @@
-import { Alert, TextArea } from '@lobehub/ui';
-import { Button, FormInstance } from 'antd';
+import { type LobeToolCustomPlugin } from '@lobechat/types';
+import { Alert, Button, Flexbox, TextArea } from '@lobehub/ui';
+import { type FormInstance } from '@lobehub/ui/form';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Flexbox } from 'react-layout-kit';
 
 import { isDesktop } from '@/const/version';
 import { useToolStore } from '@/store/tool';
@@ -12,7 +12,7 @@ import { electronStylish } from '@/styles/electron';
 import { parseMcpInput } from './utils';
 
 interface QuickImportSectionProps {
-  form: FormInstance;
+  form: FormInstance<LobeToolCustomPlugin>;
   isEditMode?: boolean;
   onClearConnectionError?: () => void;
 }
@@ -66,25 +66,25 @@ const QuickImportSection = ({
     // Check for duplicate identifier (only in create mode)
     if (!isEditMode && pluginIds.includes(identifier)) {
       // Update form fields even if duplicate, so user sees the pasted values
-      form.setFieldsValue({
+      form.setValues({
         customParams: { mcp: mcpConfig },
-        identifier: identifier,
+        identifier,
       });
       // Trigger validation to show Form.Item error
-      form.validateFields(['identifier']);
+      form.validate(['identifier']);
       setIsImportModalVisible(false); // Close modal even on duplicate error
       setJsonInput(''); // Clear modal input
       return;
     }
 
     // All checks passed, fill the form
-    form.setFieldsValue({
+    form.setValues({
       customParams: { mcp: mcpConfig },
-      identifier: identifier,
+      identifier,
     });
 
     // Clear potential old validation error on identifier field
-    form.setFields([{ errors: [], name: 'identifier' }]);
+    form.setErrors({ identifier: undefined });
 
     // Clear modal state and close (or rather, hide the import UI)
     setIsImportModalVisible(false);
@@ -97,12 +97,12 @@ const QuickImportSection = ({
       <div>
         <Button
           block // Make button full width
+          style={{ marginBottom: 16 }} // Add some spacing
+          type="dashed"
           onClick={() => {
             setImportError(null); // Clear previous errors when opening
             setIsImportModalVisible(true);
           }}
-          style={{ marginBottom: 16 }} // Add some spacing
-          type="dashed"
         >
           {t('dev.mcp.quickImport')}
         </Button>
@@ -113,14 +113,11 @@ const QuickImportSection = ({
   return (
     <Flexbox gap={8}>
       {importError && (
-        <Alert message={importError} showIcon style={{ marginBottom: 8 }} type="error" />
+        <Alert showIcon style={{ marginBottom: 8 }} title={importError} type="error" />
       )}
       <TextArea
         autoSize={{ maxRows: 15, minRows: 10 }}
-        onChange={(e) => {
-          setJsonInput(e.target.value);
-          if (importError) setImportError(null);
-        }}
+        value={jsonInput}
         placeholder={`{
   "mcpServers": {
     "github": {
@@ -135,19 +132,22 @@ const QuickImportSection = ({
     }
   }
 }`}
-        value={jsonInput}
+        onChange={(e) => {
+          setJsonInput(e.target.value);
+          if (importError) setImportError(null);
+        }}
       />
       <Flexbox horizontal justify={'space-between'}>
         <Button
           className={electronStylish.nodrag}
+          size={'small'}
           onClick={() => {
             setIsImportModalVisible(false);
           }}
-          size={'small'}
         >
           {t('common:cancel')}
         </Button>
-        <Button onClick={handleImportConfirm} size={'small'} type={'primary'}>
+        <Button size={'small'} type={'primary'} onClick={handleImportConfirm}>
           {t('common:import')}
         </Button>
       </Flexbox>

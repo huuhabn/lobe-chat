@@ -2,20 +2,13 @@
 import { ModelProvider } from 'model-bank';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { testProvider } from '../../providerTestUtils';
 import { LobeCometAPIAI, params } from './index';
 
-// Basic provider tests
-testProvider({
-  Runtime: LobeCometAPIAI,
-  chatDebugEnv: 'DEBUG_COMETAPI_COMPLETION',
-  chatModel: 'gpt-3.5-turbo',
-  defaultBaseURL: 'https://api.cometapi.com/v1',
-  provider: ModelProvider.CometAPI,
-  test: {
-    skipAPICall: true,
-  },
-});
+const loadModelsMock = vi.hoisted(() => vi.fn().mockResolvedValue([]));
+
+vi.mock('@lobechat/business-model-bank/model-config', () => ({
+  loadModels: loadModelsMock,
+}));
 
 // Custom feature tests
 describe('LobeCometAPIAI - custom features', () => {
@@ -295,16 +288,7 @@ describe('LobeCometAPIAI - custom features', () => {
         },
       };
 
-      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
-      const models = await params.models!({ client: mockClient as any });
-      expect(models).toEqual([]);
-      expect(consoleWarnSpy).toHaveBeenCalledWith(
-        'Failed to fetch CometAPI models. Please ensure your CometAPI API key is valid:',
-        expect.any(Error),
-      );
-
-      consoleWarnSpy.mockRestore();
+      await expect(params.models!({ client: mockClient as any })).rejects.toThrow('API Error');
     });
 
     it('should handle network error', async () => {
@@ -316,12 +300,7 @@ describe('LobeCometAPIAI - custom features', () => {
         },
       };
 
-      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
-      const models = await params.models!({ client: mockClient as any });
-      expect(models).toEqual([]);
-
-      consoleWarnSpy.mockRestore();
+      await expect(params.models!({ client: mockClient as any })).rejects.toThrow('Network Error');
     });
 
     it('should handle unauthorized error', async () => {
@@ -333,12 +312,7 @@ describe('LobeCometAPIAI - custom features', () => {
         },
       };
 
-      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
-      const models = await params.models!({ client: mockClient as any });
-      expect(models).toEqual([]);
-
-      consoleWarnSpy.mockRestore();
+      await expect(params.models!({ client: mockClient as any })).rejects.toThrow('Unauthorized');
     });
 
     it('should process multi-provider model list', async () => {
@@ -359,24 +333,6 @@ describe('LobeCometAPIAI - custom features', () => {
       const models = await params.models!({ client: mockClient as any });
       expect(models.length).toBe(3);
       // processMultiProviderModelList should handle different providers
-    });
-
-    it('should merge with known model data from model-bank', async () => {
-      const mockClient = {
-        apiKey: 'test',
-        baseURL: 'https://api.cometapi.com/v1',
-        models: {
-          list: vi.fn().mockResolvedValue({
-            data: [{ id: 'gpt-3.5-turbo', object: 'model', owned_by: 'openai' }],
-          }),
-        },
-      };
-
-      const models = await params.models!({ client: mockClient as any });
-      const model = models[0];
-
-      // Should have properties from both API and model-bank
-      expect(model.id).toBe('gpt-3.5-turbo');
     });
 
     it('should handle models not in model-bank', async () => {
@@ -414,36 +370,6 @@ describe('LobeCometAPIAI - custom features', () => {
 
       const models = await params.models!({ client: mockClient as any });
       expect(models.length).toBe(4);
-    });
-
-    it('should preserve object field in processed models', async () => {
-      const mockClient = {
-        apiKey: 'test',
-        baseURL: 'https://api.cometapi.com/v1',
-        models: {
-          list: vi.fn().mockResolvedValue({
-            data: [{ id: 'gpt-3.5-turbo', object: 'model', owned_by: 'openai' }],
-          }),
-        },
-      };
-
-      await params.models!({ client: mockClient as any });
-      // The mapped model list should preserve the object field
-    });
-
-    it('should call processMultiProviderModelList with correct arguments', async () => {
-      const mockClient = {
-        apiKey: 'test',
-        baseURL: 'https://api.cometapi.com/v1',
-        models: {
-          list: vi.fn().mockResolvedValue({
-            data: [{ id: 'gpt-3.5-turbo', object: 'model', owned_by: 'openai' }],
-          }),
-        },
-      };
-
-      await params.models!({ client: mockClient as any });
-      // processMultiProviderModelList should be called with modelList and 'cometapi'
     });
   });
 });

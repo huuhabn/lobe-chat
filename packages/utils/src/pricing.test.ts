@@ -1,4 +1,4 @@
-import { Pricing } from 'model-bank';
+import type { Pricing } from 'model-bank';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -6,11 +6,22 @@ import {
   getAudioOutputUnitRate,
   getCachedAudioInputUnitRate,
   getCachedTextInputUnitRate,
+  getOriginalUnitRateByName,
   getTextInputUnitRate,
   getTextOutputUnitRate,
   getUnitRateByName,
   getWriteCacheInputUnitRate,
 } from './pricing';
+
+const tieredAudioInputUnit = (): NonNullable<Pricing['units']>[number] => ({
+  name: 'audioInput',
+  strategy: 'tiered',
+  unit: 'second',
+  tiers: [
+    { rate: 0.01, upTo: 3600 },
+    { rate: 0.008, upTo: 'infinity' },
+  ],
+});
 
 describe('pricing utilities (new)', () => {
   describe('getUnitRateByName', () => {
@@ -36,17 +47,7 @@ describe('pricing utilities (new)', () => {
 
     it('handles tiered strategy (first tier)', () => {
       const pricing: Pricing = {
-        units: [
-          {
-            name: 'audioInput',
-            strategy: 'tiered',
-            unit: 'second',
-            tiers: [
-              { rate: 0.01, upTo: 3600 },
-              { rate: 0.008, upTo: 'infinity' },
-            ],
-          },
-        ],
+        units: [tieredAudioInputUnit()],
       };
       expect(getUnitRateByName(pricing, 'audioInput')).toBe(0.01);
     });
@@ -111,20 +112,96 @@ describe('pricing utilities (new)', () => {
         units: [
           { name: 'textInput', strategy: 'fixed', unit: 'millionTokens', rate: 0.001 },
           { name: 'textOutput', strategy: 'fixed', unit: 'millionTokens', rate: 0.002 },
-          {
-            name: 'audioInput',
-            strategy: 'tiered',
-            unit: 'second',
-            tiers: [
-              { rate: 0.01, upTo: 3600 },
-              { rate: 0.008, upTo: 'infinity' },
-            ],
-          },
+          tieredAudioInputUnit(),
         ],
       };
       expect(getUnitRateByName(pricing, 'textInput')).toBe(0.001);
       expect(getUnitRateByName(pricing, 'textOutput')).toBe(0.002);
       expect(getUnitRateByName(pricing, 'audioInput')).toBe(0.01);
+    });
+  });
+
+  describe('getOriginalUnitRateByName', () => {
+    it('returns fixed originalRate when it is higher than the current rate', () => {
+      const pricing: Pricing = {
+        units: [
+          {
+            name: 'textInput',
+            originalRate: 0.435,
+            rate: 0.0435,
+            strategy: 'fixed',
+            unit: 'millionTokens',
+          },
+        ],
+      };
+
+      expect(getOriginalUnitRateByName(pricing, 'textInput')).toBe(0.435);
+    });
+
+    it('returns undefined when originalRate is absent or not higher than current rate', () => {
+      const pricing: Pricing = {
+        units: [
+          { name: 'textInput', strategy: 'fixed', unit: 'millionTokens', rate: 0.0435 },
+          {
+            name: 'textOutput',
+            originalRate: 0.087,
+            rate: 0.087,
+            strategy: 'fixed',
+            unit: 'millionTokens',
+          },
+        ],
+      };
+
+      expect(getOriginalUnitRateByName(pricing, 'textInput')).toBeUndefined();
+      expect(getOriginalUnitRateByName(pricing, 'textOutput')).toBeUndefined();
+    });
+
+    it('returns tiered and lookup original prices when they are higher than current rates', () => {
+      const pricing: Pricing = {
+        units: [
+          {
+            name: 'textInput',
+            strategy: 'tiered',
+            tiers: [{ originalRate: 0.2, rate: 0.1, upTo: 'infinity' }],
+            unit: 'millionTokens',
+          },
+          {
+            lookup: {
+              originalPrices: { default: 0.4 },
+              prices: { default: 0.2 },
+              pricingParams: ['quality'],
+            },
+            name: 'textOutput',
+            strategy: 'lookup',
+            unit: 'millionTokens',
+          },
+        ],
+      };
+
+      expect(getOriginalUnitRateByName(pricing, 'textInput')).toBe(0.2);
+      expect(getOriginalUnitRateByName(pricing, 'textOutput')).toBe(0.4);
+    });
+  });
+
+  describe('TTL cache-write lookups', () => {
+    it('display the default 5-minute price instead of the alphabetically first 1-hour price', () => {
+      const pricing: Pricing = {
+        units: [
+          {
+            lookup: {
+              originalPrices: { '1h': 24, '5m': 15 },
+              prices: { '1h': 20, '5m': 12.5 },
+              pricingParams: ['ttl'],
+            },
+            name: 'textInput_cacheWrite',
+            strategy: 'lookup',
+            unit: 'millionTokens',
+          },
+        ],
+      };
+
+      expect(getWriteCacheInputUnitRate(pricing)).toBe(12.5);
+      expect(getOriginalUnitRateByName(pricing, 'textInput_cacheWrite')).toBe(15);
     });
   });
 
@@ -134,15 +211,7 @@ describe('pricing utilities (new)', () => {
         units: [
           { name: 'textInput', strategy: 'fixed', unit: 'millionTokens', rate: 0.001 },
           { name: 'textOutput', strategy: 'fixed', unit: 'millionTokens', rate: 0.002 },
-          {
-            name: 'audioInput',
-            strategy: 'tiered',
-            unit: 'second',
-            tiers: [
-              { rate: 0.01, upTo: 3600 },
-              { rate: 0.008, upTo: 'infinity' },
-            ],
-          },
+          tieredAudioInputUnit(),
           { name: 'audioOutput', strategy: 'fixed', unit: 'second', rate: 0.015 },
           { name: 'textInput_cacheRead', strategy: 'fixed', unit: 'millionTokens', rate: 0.0005 },
           {

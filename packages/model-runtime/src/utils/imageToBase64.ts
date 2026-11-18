@@ -1,3 +1,10 @@
+import { Buffer } from 'buffer.js';
+
+import { resolveMimeTypeFromBytes } from './imageMimeType';
+import { readBlobWithLimit } from './readBlobWithLimit';
+
+export { readBlobWithLimit } from './readBlobWithLimit';
+
 export const imageToBase64 = ({
   size,
   img,
@@ -36,25 +43,52 @@ export const imageToBase64 = ({
   return canvas.toDataURL(type);
 };
 
+export interface ImageUrlToBase64Options {
+  /** Abort the download once the response exceeds this many bytes. */
+  maxBytes?: number;
+  /** Cancels the download, e.g. `AbortSignal.timeout(...)`. */
+  signal?: AbortSignal;
+}
+
+/**
+ * Convert image URL to base64
+ * Uses SSRF-safe fetch on server-side to prevent SSRF attacks
+ */
 export const imageUrlToBase64 = async (
   imageUrl: string,
+  options: ImageUrlToBase64Options = {},
 ): Promise<{ base64: string; mimeType: string }> => {
   try {
-    const res = await fetch(imageUrl);
-    const blob = await res.blob();
+    const isServer = typeof window === 'undefined';
+
+    // Use SSRF-safe fetch on server-side to prevent SSRF attacks
+    const init = options.signal ? { signal: options.signal } : undefined;
+    // Also cap the stream inside ssrfSafeFetch. It truncates silently, so allow one extra
+    // byte for readBlobWithLimit to detect the overflow and reject.
+    const res = isServer
+      ? await import('@lobechat/ssrf-safe-fetch').then((m) =>
+          m.ssrfSafeFetch(
+            imageUrl,
+            init,
+            options.maxBytes ? { maxContentLength: options.maxBytes + 1 } : undefined,
+          ),
+        )
+      : await fetch(imageUrl, init);
+
+    const blob = options.maxBytes
+      ? await readBlobWithLimit(res, options.maxBytes)
+      : await res.blob();
     const arrayBuffer = await blob.arrayBuffer();
+    const mimeType = await resolveMimeTypeFromBytes(blob.type, arrayBuffer);
 
-    const base64 =
-      typeof btoa === 'function'
-        ? btoa(
-            new Uint8Array(arrayBuffer).reduce(
-              (data, byte) => data + String.fromCharCode(byte),
-              '',
-            ),
-          )
-        : Buffer.from(arrayBuffer).toString('base64');
+    // Client-side uses btoa, server-side uses Buffer
+    const base64 = isServer
+      ? Buffer.from(arrayBuffer).toString('base64')
+      : btoa(
+          new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), ''),
+        );
 
-    return { base64, mimeType: blob.type };
+    return { base64, mimeType };
   } catch (error) {
     console.error('Error converting image to base64:', error);
     throw error;

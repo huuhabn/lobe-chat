@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  MODEL_PARAMETER_CONFLICTS,
   createParameterResolver,
+  resolveModelSamplingParameters,
   resolveParameters,
 } from './parameterResolver';
 
@@ -216,10 +216,108 @@ describe('resolveParameters', () => {
       expect(result).toEqual({ top_p: 0.9 });
     });
 
+    it('should treat null values as undefined', () => {
+      const result = resolveParameters(
+        { frequency_penalty: null, temperature: null, top_p: 0.9 },
+        {},
+      );
+      expect(result).toEqual({ top_p: 0.9 });
+    });
+
     it('should handle both parameters undefined with conflict', () => {
       const result = resolveParameters({}, { hasConflict: true });
       expect(result).toEqual({});
     });
+  });
+});
+
+describe('resolveModelSamplingParameters', () => {
+  it('should omit top_p for Claude 4+ models when temperature is also set', () => {
+    const result = resolveModelSamplingParameters(
+      'claude-haiku-4-5-20251001',
+      { temperature: 0.7, top_p: 0.9 },
+      { normalizeTemperature: false, preferTemperature: true },
+    );
+
+    // Always returns both keys so spreading onto a payload clears the conflicting field
+    expect(result).toEqual({ temperature: 0.7, top_p: undefined });
+  });
+
+  it('should keep both parameters for non-conflict models', () => {
+    const result = resolveModelSamplingParameters(
+      'claude-3-5-sonnet-20240620',
+      { temperature: 0.7, top_p: 0.9 },
+      { normalizeTemperature: false, preferTemperature: true },
+    );
+
+    expect(result).toEqual({ temperature: 0.7, top_p: 0.9 });
+  });
+
+  it('should treat null sampling values as undefined and not include them in result', () => {
+    const result = resolveModelSamplingParameters(
+      'claude-haiku-4-5-20251001',
+      { temperature: null, top_p: 0.9 },
+      { normalizeTemperature: false, preferTemperature: true },
+    );
+
+    // temperature was null (treated as not provided), so it should not appear in result
+    expect(result).toEqual({ top_p: 0.9 });
+    expect(result).not.toHaveProperty('temperature');
+  });
+
+  it('should not add spurious undefined keys when input omits fields', () => {
+    const result = resolveModelSamplingParameters(
+      'gpt-4o',
+      {},
+      { normalizeTemperature: false, preferTemperature: true },
+    );
+
+    expect(result).toEqual({});
+    expect(result).not.toHaveProperty('temperature');
+    expect(result).not.toHaveProperty('top_p');
+  });
+
+  it('should omit temperature and top_p for models that reject sampling params', () => {
+    const result = resolveModelSamplingParameters(
+      'claude-opus-4-7',
+      { temperature: 0.7, top_p: 0.9 },
+      { normalizeTemperature: false, preferTemperature: true },
+    );
+
+    // Both keys present with undefined values so spreading clears any pre-set payload fields
+    expect(result).toEqual({ temperature: undefined, top_p: undefined });
+  });
+
+  it('should omit temperature and top_p for Claude Opus 4.8', () => {
+    const result = resolveModelSamplingParameters(
+      'claude-opus-4-8',
+      { temperature: 0.7, top_p: 0.9 },
+      { normalizeTemperature: false, preferTemperature: true },
+    );
+
+    expect(result).toEqual({ temperature: undefined, top_p: undefined });
+  });
+
+  it('should omit temperature and top_p for Bedrock Opus 4.7 id', () => {
+    const result = resolveModelSamplingParameters(
+      'us.anthropic.claude-opus-4-7-v1',
+      { temperature: 0.7, top_p: 0.9 },
+      { normalizeTemperature: false, preferTemperature: true },
+    );
+
+    expect(result).toEqual({ temperature: undefined, top_p: undefined });
+  });
+
+  it('should not add spurious keys when omit-model input has no sampling fields', () => {
+    const result = resolveModelSamplingParameters(
+      'claude-opus-4-7',
+      {},
+      { normalizeTemperature: false, preferTemperature: true },
+    );
+
+    expect(result).toEqual({});
+    expect(result).not.toHaveProperty('temperature');
+    expect(result).not.toHaveProperty('top_p');
   });
 });
 
@@ -244,57 +342,5 @@ describe('createParameterResolver', () => {
 
     const result = resolver({ temperature: 0.02, top_p: 0.005 });
     expect(result).toEqual({ temperature: 0.01, top_p: 0.01 });
-  });
-});
-
-describe('MODEL_PARAMETER_CONFLICTS', () => {
-  describe('ANTHROPIC_CLAUDE_4_PLUS', () => {
-    it('should contain expected Claude 4+ models', () => {
-      expect(MODEL_PARAMETER_CONFLICTS.ANTHROPIC_CLAUDE_4_PLUS.has('claude-opus-4-1')).toBe(true);
-      expect(
-        MODEL_PARAMETER_CONFLICTS.ANTHROPIC_CLAUDE_4_PLUS.has('claude-opus-4-1-20250805'),
-      ).toBe(true);
-      expect(
-        MODEL_PARAMETER_CONFLICTS.ANTHROPIC_CLAUDE_4_PLUS.has('claude-sonnet-4-5-20250929'),
-      ).toBe(true);
-    });
-
-    it('should not contain Claude 3.x models', () => {
-      expect(MODEL_PARAMETER_CONFLICTS.ANTHROPIC_CLAUDE_4_PLUS.has('claude-3-opus-20240229')).toBe(
-        false,
-      );
-      expect(
-        MODEL_PARAMETER_CONFLICTS.ANTHROPIC_CLAUDE_4_PLUS.has('claude-3.5-sonnet-20240620'),
-      ).toBe(false);
-    });
-  });
-
-  describe('BEDROCK_CLAUDE_4_PLUS', () => {
-    it('should contain both standard and Bedrock-specific model IDs', () => {
-      expect(MODEL_PARAMETER_CONFLICTS.BEDROCK_CLAUDE_4_PLUS.has('claude-opus-4-1')).toBe(true);
-      expect(
-        MODEL_PARAMETER_CONFLICTS.BEDROCK_CLAUDE_4_PLUS.has(
-          'anthropic.claude-opus-4-1-20250805-v1:0',
-        ),
-      ).toBe(true);
-      expect(
-        MODEL_PARAMETER_CONFLICTS.BEDROCK_CLAUDE_4_PLUS.has(
-          'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
-        ),
-      ).toBe(true);
-    });
-
-    it('should contain all Bedrock regional variants', () => {
-      expect(
-        MODEL_PARAMETER_CONFLICTS.BEDROCK_CLAUDE_4_PLUS.has(
-          'anthropic.claude-opus-4-20250514-v1:0',
-        ),
-      ).toBe(true);
-      expect(
-        MODEL_PARAMETER_CONFLICTS.BEDROCK_CLAUDE_4_PLUS.has(
-          'us.anthropic.claude-opus-4-20250514-v1:0',
-        ),
-      ).toBe(true);
-    });
   });
 });

@@ -1,21 +1,25 @@
 // @vitest-environment node
+import { DEFAULT_INBOX_AVATAR, INBOX_SESSION_ID } from '@lobechat/const';
+import { CHAT_GROUP_SESSION_ID_PREFIX } from '@lobechat/types';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { LobeChatDatabase } from '@/database/type';
+import type { LobeChatDatabase } from '@/database/type';
 
+import { getTestDB } from '../../core/getTestDB';
+import type { NewChatGroup } from '../../schemas';
 import {
-  NewChatGroup,
   agents as agentsTable,
   chatGroups,
   chatGroupsAgents,
   users,
+  workspaces,
 } from '../../schemas';
 import { ChatGroupModel } from '../chatGroup';
-import { getTestDB } from './_util';
 
 const userId = 'test-user';
 const otherUserId = 'other-user';
+const workspaceId = 'chat-group-workspace';
 
 const serverDB: LobeChatDatabase = await getTestDB();
 
@@ -30,11 +34,18 @@ type RelationAgent = {
 const toRelationAgents = (agents: unknown): RelationAgent[] => agents as RelationAgent[];
 
 const chatGroupModel = new ChatGroupModel(serverDB, userId);
+const workspaceChatGroupModel = new ChatGroupModel(serverDB, otherUserId, workspaceId);
 
 beforeEach(async () => {
   await serverDB.delete(users);
   // Create test users
   await serverDB.insert(users).values([{ id: userId }, { id: otherUserId }]);
+  await serverDB.insert(workspaces).values({
+    id: workspaceId,
+    name: 'Chat Group Workspace',
+    primaryOwnerId: userId,
+    slug: workspaceId,
+  });
 });
 
 afterEach(async () => {
@@ -122,6 +133,63 @@ describe('ChatGroupModel', () => {
     });
   });
 
+  describe('getGroupByForkedFromIdentifier', () => {
+    it('should return group id when a matching forkedFromIdentifier exists', async () => {
+      await serverDB.insert(chatGroups).values({
+        id: 'forked-group-1',
+        userId,
+        title: 'Forked Group',
+        config: { forkedFromIdentifier: 'market-agent-123' },
+      });
+
+      const result = await chatGroupModel.getGroupByForkedFromIdentifier('market-agent-123');
+
+      expect(result).toBe('forked-group-1');
+    });
+
+    it('should return null when no group matches the forkedFromIdentifier', async () => {
+      const result = await chatGroupModel.getGroupByForkedFromIdentifier('non-existent-identifier');
+
+      expect(result).toBeNull();
+    });
+
+    it('should not return groups belonging to other users', async () => {
+      await serverDB.insert(chatGroups).values({
+        id: 'other-forked-group',
+        userId: otherUserId,
+        title: 'Other User Forked Group',
+        config: { forkedFromIdentifier: 'market-agent-456' },
+      });
+
+      const result = await chatGroupModel.getGroupByForkedFromIdentifier('market-agent-456');
+
+      expect(result).toBeNull();
+    });
+
+    it('should return the most recently updated group when multiple match', async () => {
+      await serverDB.insert(chatGroups).values([
+        {
+          id: 'forked-old',
+          userId,
+          title: 'Old Forked Group',
+          config: { forkedFromIdentifier: 'market-agent-789' },
+          updatedAt: new Date('2024-01-01T10:00:00Z'),
+        },
+        {
+          id: 'forked-new',
+          userId,
+          title: 'New Forked Group',
+          config: { forkedFromIdentifier: 'market-agent-789' },
+          updatedAt: new Date('2024-01-02T10:00:00Z'),
+        },
+      ]);
+
+      const result = await chatGroupModel.getGroupByForkedFromIdentifier('market-agent-789');
+
+      expect(result).toBe('forked-new');
+    });
+  });
+
   describe('queryWithMemberDetails', () => {
     it('should return groups with their agent members', async () => {
       // Create test data
@@ -152,17 +220,17 @@ describe('ChatGroupModel', () => {
       expect(result).toHaveLength(2);
 
       const group1 = result.find((g) => g.id === 'group-1');
-      expect(group1?.members).toHaveLength(2);
-      expect(group1?.members.map((m: any) => m.title)).toEqual(
+      expect(group1?.agents).toHaveLength(2);
+      expect(group1?.agents.map((m: any) => m.title)).toEqual(
         expect.arrayContaining(['Agent 1', 'Agent 2']),
       );
 
       const group2 = result.find((g) => g.id === 'group-2');
-      expect(group2?.members).toHaveLength(1);
-      expect(group2?.members[0].title).toBe('Agent 3');
+      expect(group2?.agents).toHaveLength(1);
+      expect(group2?.agents[0].title).toBe('Agent 3');
     });
 
-    it('should return groups with empty members array when no agents assigned', async () => {
+    it('should return groups with empty agents array when no agents assigned', async () => {
       await serverDB.insert(chatGroups).values({
         id: 'group-no-agents',
         userId,
@@ -172,7 +240,7 @@ describe('ChatGroupModel', () => {
       const result = await chatGroupModel.queryWithMemberDetails();
 
       expect(result).toHaveLength(1);
-      expect(result[0].members).toEqual([]);
+      expect(result[0].agents).toEqual([]);
     });
 
     it('should return empty array when no groups exist', async () => {
@@ -226,9 +294,8 @@ describe('ChatGroupModel', () => {
         description: 'A test chat group',
         pinned: true,
         config: {
-          maxResponseInRow: 5,
-          responseOrder: 'sequential',
-          scene: 'casual',
+          allowDM: true,
+          revealDM: false,
         },
       };
 
@@ -240,11 +307,10 @@ describe('ChatGroupModel', () => {
       expect(result.description).toBe('A test chat group');
       expect(result.pinned).toBe(true);
       expect(result.config).toEqual({
-        maxResponseInRow: 5,
-        responseOrder: 'sequential',
-        scene: 'casual',
+        allowDM: true,
+        revealDM: false,
       });
-      expect(result.id.startsWith('cg_')).toBe(true);
+      expect(result.id.startsWith(CHAT_GROUP_SESSION_ID_PREFIX)).toBe(true);
     });
 
     it('should create group with custom ID', async () => {
@@ -335,6 +401,67 @@ describe('ChatGroupModel', () => {
     });
   });
 
+  describe('publishToWorkspace', () => {
+    it('publishes the private supervisor agent together with the group', async () => {
+      const ownerModel = new ChatGroupModel(serverDB, userId, workspaceId);
+
+      await serverDB.insert(chatGroups).values({
+        id: 'publish-group',
+        title: 'Publish group',
+        userId,
+        visibility: 'private',
+        workspaceId,
+      });
+      await serverDB.insert(agentsTable).values([
+        {
+          id: 'publish-supervisor',
+          title: 'Supervisor',
+          userId,
+          virtual: true,
+          visibility: 'private',
+          workspaceId,
+        },
+        {
+          id: 'publish-private-member',
+          title: 'Private member',
+          userId,
+          visibility: 'private',
+          workspaceId,
+        },
+      ]);
+      await serverDB.insert(chatGroupsAgents).values([
+        {
+          agentId: 'publish-supervisor',
+          chatGroupId: 'publish-group',
+          order: -1,
+          role: 'supervisor',
+          userId,
+          workspaceId,
+        },
+        {
+          agentId: 'publish-private-member',
+          chatGroupId: 'publish-group',
+          order: 0,
+          role: 'participant',
+          userId,
+          workspaceId,
+        },
+      ]);
+
+      const result = await ownerModel.publishToWorkspace('publish-group');
+      expect(result.visibility).toBe('public');
+
+      const rows = await serverDB
+        .select({ id: agentsTable.id, visibility: agentsTable.visibility })
+        .from(agentsTable);
+      const byId = Object.fromEntries(rows.map((r) => [r.id, r.visibility]));
+      // Supervisor visibility follows the group; a private member agent keeps
+      // its own visibility (its owner demoted/kept it private on purpose).
+      expect(byId['publish-supervisor']).toBe('public');
+      expect(byId['publish-private-member']).toBe('private');
+    });
+  });
+
   describe('addAgentToGroup', () => {
     it('should add agent to group', async () => {
       // Create test data
@@ -354,14 +481,14 @@ describe('ChatGroupModel', () => {
 
       const result = await chatGroupModel.addAgentToGroup('test-group', 'test-agent', {
         order: 5,
-        role: 'moderator',
+        role: 'assistant',
       });
 
       expect(result.chatGroupId).toBe('test-group');
       expect(result.agentId).toBe('test-agent');
       expect(result.userId).toBe(userId);
       expect(result.order).toBe(5);
-      expect(result.role).toBe('moderator');
+      expect(result.role).toBe('assistant');
     });
 
     it('should add agent with default options', async () => {
@@ -388,6 +515,88 @@ describe('ChatGroupModel', () => {
   });
 
   describe('addAgentsToGroup', () => {
+    it('should refuse a group-owned agent joining a second group', async () => {
+      // `resolveGroupMembershipType` treats a virtual member as owned by ITS
+      // group — the delete path takes it down with the group, the transfer
+      // path rehomes it. Both are only sound while it belongs to one group.
+      // The member picker already filters virtual agents, which left this
+      // enforced by a query rather than by the write.
+      await serverDB.transaction(async (trx) => {
+        await trx.insert(chatGroups).values([
+          { id: 'owner-group', title: 'Owner', userId },
+          { id: 'poacher-group', title: 'Poacher', userId },
+        ]);
+        await trx.insert(agentsTable).values({
+          id: 'group-built-member',
+          title: 'Group Built',
+          userId,
+          virtual: true,
+        });
+        await trx.insert(chatGroupsAgents).values({
+          agentId: 'group-built-member',
+          chatGroupId: 'owner-group',
+          userId,
+        });
+      });
+
+      await expect(
+        chatGroupModel.addAgentsToGroup('poacher-group', ['group-built-member']),
+      ).rejects.toThrow(/cannot join another group/);
+
+      const rosters = await serverDB
+        .select()
+        .from(chatGroupsAgents)
+        .where(eq(chatGroupsAgents.agentId, 'group-built-member'));
+      expect(rosters).toHaveLength(1);
+      expect(rosters[0].chatGroupId).toBe('owner-group');
+    });
+
+    it('should refuse a builtin agent joining a group', async () => {
+      // Builtins are `virtual` too, so membership rules would classify one as
+      // group-OWNED — and removal deletes owned members. Adding your Inbox to
+      // a group and then leaving would delete the Inbox.
+      await serverDB.transaction(async (trx) => {
+        await trx.insert(chatGroups).values({ id: 'builtin-add-group', title: 'B', userId });
+        await trx.insert(agentsTable).values({
+          id: 'my-inbox',
+          slug: 'inbox',
+          title: 'Inbox',
+          userId,
+          virtual: true,
+        });
+      });
+
+      await expect(
+        chatGroupModel.addAgentsToGroup('builtin-add-group', ['my-inbox']),
+      ).rejects.toThrow(/builtin agent cannot join/);
+
+      const roster = await serverDB
+        .select()
+        .from(chatGroupsAgents)
+        .where(eq(chatGroupsAgents.agentId, 'my-inbox'));
+      expect(roster).toHaveLength(0);
+    });
+
+    it('should let a freshly built virtual agent join its first group', async () => {
+      // The group agent builder creates `virtual: true` and adds it here. The
+      // invariant is "exactly one group", not "never joins one" — rejecting
+      // every virtual agent breaks the builder outright.
+      await serverDB.transaction(async (trx) => {
+        await trx.insert(chatGroups).values({ id: 'builder-group', title: 'Builder', userId });
+        await trx.insert(agentsTable).values({
+          id: 'freshly-built',
+          title: 'Freshly Built',
+          userId,
+          virtual: true,
+        });
+      });
+
+      const result = await chatGroupModel.addAgentsToGroup('builder-group', ['freshly-built']);
+
+      expect(result.added).toHaveLength(1);
+      expect(result.added[0].agentId).toBe('freshly-built');
+    });
+
     it('should add multiple agents to group', async () => {
       // Create test data
       await serverDB.transaction(async (trx) => {
@@ -410,12 +619,50 @@ describe('ChatGroupModel', () => {
         'agent-3',
       ]);
 
-      const connectedAgents = toRelationAgents(result);
-      expect(connectedAgents).toHaveLength(3);
-      expect(connectedAgents.map((a) => a.agentId)).toEqual(['agent-1', 'agent-2', 'agent-3']);
+      expect(result.added).toHaveLength(3);
+      expect(result.added.map((a) => a.agentId)).toEqual(['agent-1', 'agent-2', 'agent-3']);
+      expect(result.existing).toHaveLength(0);
     });
 
-    it('should throw when adding duplicate agents', async () => {
+    it('should append new members after the current max order (never collapse to 0)', async () => {
+      await serverDB.transaction(async (trx) => {
+        await trx.insert(chatGroups).values({
+          id: 'order-add-group',
+          userId,
+          title: 'Order Add Group',
+        });
+
+        await trx.insert(agentsTable).values([
+          { id: 'oa-existing', userId, title: 'Existing' },
+          { id: 'oa-1', userId, title: 'A1' },
+          { id: 'oa-2', userId, title: 'A2' },
+          { id: 'oa-3', userId, title: 'A3' },
+        ]);
+
+        // Existing member sitting at the default order 0.
+        await trx.insert(chatGroupsAgents).values({
+          chatGroupId: 'order-add-group',
+          agentId: 'oa-existing',
+          userId,
+          order: 0,
+        });
+      });
+
+      // First batch appends after max existing order (0) → 1, 2.
+      const first = await chatGroupModel.addAgentsToGroup('order-add-group', ['oa-1', 'oa-2']);
+      expect(first.added.map((a) => a.order)).toEqual([1, 2]);
+
+      // Second batch continues after the new max (2) → 3.
+      const second = await chatGroupModel.addAgentsToGroup('order-add-group', ['oa-3']);
+      expect(second.added.map((a) => a.order)).toEqual([3]);
+
+      // Every member ends up with a unique order → the roster no longer shuffles.
+      const roster = await chatGroupModel.getGroupAgents('order-add-group');
+      const orders = roster.map((r) => r.order);
+      expect(new Set(orders).size).toBe(orders.length);
+    });
+
+    it('should skip existing agents and only add new ones', async () => {
       // Create test data
       await serverDB.transaction(async (trx) => {
         await trx.insert(chatGroups).values({
@@ -437,19 +684,22 @@ describe('ChatGroupModel', () => {
         });
       });
 
-      await expect(
-        chatGroupModel.addAgentsToGroup('existing-agent-group', ['existing-agent', 'new-agent']),
-      ).rejects.toThrow();
+      const result = await chatGroupModel.addAgentsToGroup('existing-agent-group', [
+        'existing-agent',
+        'new-agent',
+      ]);
 
-      const groupAgents = toRelationAgents(
-        await chatGroupModel.getGroupAgents('existing-agent-group'),
-      );
+      // Should only add new-agent, and report existing-agent as skipped
+      expect(result.added).toHaveLength(1);
+      expect(result.added[0].agentId).toBe('new-agent');
+      expect(result.existing).toEqual(['existing-agent']);
 
-      expect(groupAgents).toHaveLength(1);
-      expect(groupAgents[0]?.agentId).toBe('existing-agent');
+      // Verify total agents in group
+      const groupAgents = await chatGroupModel.getGroupAgents('existing-agent-group');
+      expect(groupAgents).toHaveLength(2);
     });
 
-    it('should throw when all agents already exist', async () => {
+    it('should return empty added array when all agents already exist', async () => {
       // Create test data
       await serverDB.transaction(async (trx) => {
         await trx.insert(chatGroups).values({
@@ -471,15 +721,142 @@ describe('ChatGroupModel', () => {
         });
       });
 
-      await expect(
-        chatGroupModel.addAgentsToGroup('all-existing-group', ['existing-only']),
-      ).rejects.toThrow();
+      const result = await chatGroupModel.addAgentsToGroup('all-existing-group', ['existing-only']);
+
+      expect(result.added).toHaveLength(0);
+      expect(result.existing).toEqual(['existing-only']);
     });
 
     it('should throw error for non-existent group', async () => {
       await expect(
         chatGroupModel.addAgentsToGroup('non-existent-group', ['agent-1']),
       ).rejects.toThrow('Group not found');
+    });
+
+    describe('private/public visibility composite rule', () => {
+      // Caller is `otherUserId` operating inside `workspaceId`. The owner of
+      // `workspaceId` is `userId`, so we exercise both "my own group" and
+      // "another member's group" within the same workspace.
+      it("allows the caller's own private agent in their own private group", async () => {
+        await serverDB.transaction(async (trx) => {
+          await trx.insert(chatGroups).values({
+            id: 'mine-private-group',
+            title: 'Mine — private',
+            userId: otherUserId,
+            workspaceId,
+            visibility: 'private',
+          });
+          await trx.insert(agentsTable).values({
+            id: 'agt-mine-private',
+            title: 'Mine — private agent',
+            userId: otherUserId,
+            workspaceId,
+            visibility: 'private',
+          });
+        });
+
+        const result = await workspaceChatGroupModel.addAgentsToGroup('mine-private-group', [
+          'agt-mine-private',
+        ]);
+
+        expect(result.added).toHaveLength(1);
+      });
+
+      it("allows a workspace public agent in the caller's own private group", async () => {
+        await serverDB.transaction(async (trx) => {
+          await trx.insert(chatGroups).values({
+            id: 'mine-private-group-pub',
+            title: 'Mine — private',
+            userId: otherUserId,
+            workspaceId,
+            visibility: 'private',
+          });
+          await trx.insert(agentsTable).values({
+            id: 'agt-ws-public',
+            title: 'Workspace public agent',
+            userId, // owned by the workspace owner — visible to all members
+            workspaceId,
+            visibility: 'public',
+          });
+        });
+
+        const result = await workspaceChatGroupModel.addAgentsToGroup('mine-private-group-pub', [
+          'agt-ws-public',
+        ]);
+
+        expect(result.added).toHaveLength(1);
+      });
+
+      it("rejects another member's private agent even in the caller's own private group", async () => {
+        await serverDB.transaction(async (trx) => {
+          await trx.insert(chatGroups).values({
+            id: 'mine-private-group-foreign',
+            title: 'Mine — private',
+            userId: otherUserId,
+            workspaceId,
+            visibility: 'private',
+          });
+          await trx.insert(agentsTable).values({
+            id: 'agt-other-private',
+            title: 'Other private agent',
+            userId,
+            workspaceId,
+            visibility: 'private',
+          });
+        });
+
+        await expect(
+          workspaceChatGroupModel.addAgentsToGroup('mine-private-group-foreign', [
+            'agt-other-private',
+          ]),
+        ).rejects.toThrow('Agent not found');
+      });
+
+      it("rejects the caller's own private agent in their own public group", async () => {
+        await serverDB.transaction(async (trx) => {
+          await trx.insert(chatGroups).values({
+            id: 'mine-public-group',
+            title: 'Mine — public',
+            userId: otherUserId,
+            workspaceId,
+            visibility: 'public',
+          });
+          await trx.insert(agentsTable).values({
+            id: 'agt-mine-private-2',
+            title: 'Mine — private agent',
+            userId: otherUserId,
+            workspaceId,
+            visibility: 'private',
+          });
+        });
+
+        await expect(
+          workspaceChatGroupModel.addAgentsToGroup('mine-public-group', ['agt-mine-private-2']),
+        ).rejects.toThrow('Agent not found');
+      });
+
+      it("rejects a private agent in another member's group (group is public)", async () => {
+        await serverDB.transaction(async (trx) => {
+          await trx.insert(chatGroups).values({
+            id: 'others-public-group',
+            title: 'Others — public',
+            userId, // group owner is the workspace owner, not the caller
+            workspaceId,
+            visibility: 'public',
+          });
+          await trx.insert(agentsTable).values({
+            id: 'agt-mine-private-3',
+            title: 'Mine — private agent',
+            userId: otherUserId,
+            workspaceId,
+            visibility: 'private',
+          });
+        });
+
+        await expect(
+          workspaceChatGroupModel.addAgentsToGroup('others-public-group', ['agt-mine-private-3']),
+        ).rejects.toThrow('Agent not found');
+      });
     });
   });
 
@@ -527,6 +904,119 @@ describe('ChatGroupModel', () => {
     });
   });
 
+  describe('removeAgentsFromGroup', () => {
+    it('should remove multiple agents from group', async () => {
+      // Create test data
+      await serverDB.transaction(async (trx) => {
+        await trx.insert(chatGroups).values({
+          id: 'batch-remove-group',
+          userId,
+          title: 'Batch Remove Group',
+        });
+
+        await trx.insert(agentsTable).values([
+          { id: 'agent-to-remove-1', userId, title: 'Agent 1' },
+          { id: 'agent-to-remove-2', userId, title: 'Agent 2' },
+          { id: 'agent-to-keep', userId, title: 'Agent to Keep' },
+        ]);
+
+        await trx.insert(chatGroupsAgents).values([
+          { chatGroupId: 'batch-remove-group', agentId: 'agent-to-remove-1', userId },
+          { chatGroupId: 'batch-remove-group', agentId: 'agent-to-remove-2', userId },
+          { chatGroupId: 'batch-remove-group', agentId: 'agent-to-keep', userId },
+        ]);
+      });
+
+      await chatGroupModel.removeAgentsFromGroup('batch-remove-group', [
+        'agent-to-remove-1',
+        'agent-to-remove-2',
+      ]);
+
+      // Verify only the specified agents were removed
+      const groupAgents = toRelationAgents(
+        await chatGroupModel.getGroupAgents('batch-remove-group'),
+      );
+      expect(groupAgents).toHaveLength(1);
+      expect(groupAgents[0]?.agentId).toBe('agent-to-keep');
+    });
+
+    it('should handle empty agentIds array gracefully', async () => {
+      await serverDB.transaction(async (trx) => {
+        await trx.insert(chatGroups).values({
+          id: 'empty-remove-group',
+          userId,
+          title: 'Empty Remove Group',
+        });
+
+        await trx.insert(agentsTable).values({
+          id: 'agent-stays',
+          userId,
+          title: 'Agent Stays',
+        });
+
+        await trx.insert(chatGroupsAgents).values({
+          chatGroupId: 'empty-remove-group',
+          agentId: 'agent-stays',
+          userId,
+        });
+      });
+
+      // Should not throw error and should not remove any agents
+      await expect(
+        chatGroupModel.removeAgentsFromGroup('empty-remove-group', []),
+      ).resolves.not.toThrow();
+
+      const groupAgents = toRelationAgents(
+        await chatGroupModel.getGroupAgents('empty-remove-group'),
+      );
+      expect(groupAgents).toHaveLength(1);
+    });
+
+    it('should handle removing non-existent agents gracefully', async () => {
+      await serverDB.insert(chatGroups).values({
+        id: 'no-match-group',
+        userId,
+        title: 'No Match Group',
+      });
+
+      // Should not throw error
+      await expect(
+        chatGroupModel.removeAgentsFromGroup('no-match-group', [
+          'non-existent-1',
+          'non-existent-2',
+        ]),
+      ).resolves.not.toThrow();
+    });
+
+    it('should remove all agents when all are specified', async () => {
+      await serverDB.transaction(async (trx) => {
+        await trx.insert(chatGroups).values({
+          id: 'remove-all-group',
+          userId,
+          title: 'Remove All Group',
+        });
+
+        await trx.insert(agentsTable).values([
+          { id: 'remove-all-1', userId, title: 'Remove All 1' },
+          { id: 'remove-all-2', userId, title: 'Remove All 2' },
+        ]);
+
+        await trx.insert(chatGroupsAgents).values([
+          { chatGroupId: 'remove-all-group', agentId: 'remove-all-1', userId },
+          { chatGroupId: 'remove-all-group', agentId: 'remove-all-2', userId },
+        ]);
+      });
+
+      await chatGroupModel.removeAgentsFromGroup('remove-all-group', [
+        'remove-all-1',
+        'remove-all-2',
+      ]);
+
+      const groupAgents = await chatGroupModel.getGroupAgents('remove-all-group');
+      expect(groupAgents).toHaveLength(0);
+    });
+  });
+
   describe('updateAgentInGroup', () => {
     it('should update agent settings in group', async () => {
       // Create test data
@@ -555,11 +1045,11 @@ describe('ChatGroupModel', () => {
 
       const result = await chatGroupModel.updateAgentInGroup('update-agent-group', 'update-agent', {
         order: 5,
-        role: 'moderator',
+        role: 'assistant',
       });
 
       expect(result.order).toBe(5);
-      expect(result.role).toBe('moderator');
+      expect(result.role).toBe('assistant');
       expect(result.updatedAt).toBeInstanceOf(Date);
     });
   });
@@ -712,6 +1202,62 @@ describe('ChatGroupModel', () => {
       expect(result[1]?.agentId).toBe('agent-order-2'); // order: 2
       expect(result[2]?.agentId).toBe('agent-order-10'); // order: 10
     });
+
+    it('should be deterministic for legacy rows that tie on both order and createdAt', async () => {
+      // A single legacy multi-row insert stamps every row with the same
+      // `order` (default 0) AND the same `createdAt`, so those two keys alone
+      // still leave the order ambiguous. `agentId` (part of the PK) is the
+      // final guaranteed-unique tiebreak that keeps the roster from shuffling.
+      const sameCreatedAt = new Date('2024-01-01T00:00:00.000Z');
+      await serverDB.transaction(async (trx) => {
+        await trx.insert(chatGroups).values({
+          id: 'legacy-tie-group',
+          userId,
+          title: 'Legacy Tie Group',
+        });
+
+        await trx.insert(agentsTable).values([
+          { id: 'legacy-c', userId, title: 'Legacy C' },
+          { id: 'legacy-a', userId, title: 'Legacy A' },
+          { id: 'legacy-b', userId, title: 'Legacy B' },
+        ]);
+
+        await trx.insert(chatGroupsAgents).values([
+          {
+            chatGroupId: 'legacy-tie-group',
+            agentId: 'legacy-c',
+            userId,
+            order: 0,
+            createdAt: sameCreatedAt,
+          },
+          {
+            chatGroupId: 'legacy-tie-group',
+            agentId: 'legacy-a',
+            userId,
+            order: 0,
+            createdAt: sameCreatedAt,
+          },
+          {
+            chatGroupId: 'legacy-tie-group',
+            agentId: 'legacy-b',
+            userId,
+            order: 0,
+            createdAt: sameCreatedAt,
+          },
+        ]);
+      });
+
+      const first = toRelationAgents(await chatGroupModel.getGroupAgents('legacy-tie-group')).map(
+        (a) => a.agentId,
+      );
+      const second = toRelationAgents(await chatGroupModel.getGroupAgents('legacy-tie-group')).map(
+        (a) => a.agentId,
+      );
+
+      // Falls back to agentId ascending, and returns the same order every time.
+      expect(first).toEqual(['legacy-a', 'legacy-b', 'legacy-c']);
+      expect(second).toEqual(first);
+    });
   });
 
   describe('getEnabledGroupAgents', () => {
@@ -814,6 +1360,232 @@ describe('ChatGroupModel', () => {
       expect(result).toHaveLength(1);
       expect(result[0].id).toBe('user-group');
       expect(result[0].userId).toBe(userId);
+    });
+
+    it('should return workspace groups for members even when rows were created by another user', async () => {
+      await serverDB.transaction(async (trx) => {
+        await trx.insert(chatGroups).values({
+          id: 'workspace-group',
+          title: 'Workspace Group',
+          userId,
+          workspaceId,
+        });
+        await trx.insert(agentsTable).values({
+          id: 'workspace-agent',
+          title: 'Workspace Agent',
+          userId,
+          workspaceId,
+        });
+        await trx.insert(chatGroupsAgents).values({
+          agentId: 'workspace-agent',
+          chatGroupId: 'workspace-group',
+          userId,
+          workspaceId,
+        });
+      });
+
+      const result = await workspaceChatGroupModel.getGroupsWithAgents(['workspace-agent']);
+
+      expect(result).toEqual([expect.objectContaining({ id: 'workspace-group', workspaceId })]);
+    });
+  });
+
+  describe('getMemberAvatarsByGroupIds', () => {
+    it('should group member avatars by chatGroupId in member order with inbox fallback', async () => {
+      await serverDB.insert(agentsTable).values([
+        { avatar: '/custom.png', id: 'member-custom', slug: 'custom', userId },
+        { avatar: null, id: 'member-inbox', slug: INBOX_SESSION_ID, userId },
+      ]);
+      await serverDB.insert(chatGroups).values({ id: 'group-avatars', title: 'G', userId });
+      await serverDB.insert(chatGroupsAgents).values([
+        { agentId: 'member-inbox', chatGroupId: 'group-avatars', order: 1, userId },
+        { agentId: 'member-custom', chatGroupId: 'group-avatars', order: 0, userId },
+      ]);
+
+      const result = await chatGroupModel.getMemberAvatarsByGroupIds(['group-avatars']);
+
+      // Ordered by `order`: custom (0) before inbox (1); inbox avatar falls back.
+      expect(result.get('group-avatars')).toEqual([
+        { avatar: '/custom.png', backgroundColor: null },
+        { avatar: DEFAULT_INBOX_AVATAR, backgroundColor: null },
+      ]);
+    });
+
+    it('should return an empty map for no group ids', async () => {
+      const result = await chatGroupModel.getMemberAvatarsByGroupIds([]);
+
+      expect(result.size).toBe(0);
+    });
+  });
+
+  describe('member agent demoted to private ', () => {
+    // Public workspace group owned by `userId` with two members: a public agent
+    // and an agent `userId` switched back to private after it joined. Viewer is
+    // `otherUserId` (same workspace) — every roster read must drop the private
+    // member for them, while the agent's owner keeps seeing it.
+    const ownerModel = new ChatGroupModel(serverDB, userId, workspaceId);
+
+    beforeEach(async () => {
+      await serverDB.insert(chatGroups).values({
+        id: 'demotion-group',
+        title: 'Demotion group',
+        userId,
+        visibility: 'public',
+        workspaceId,
+      });
+      await serverDB.insert(agentsTable).values([
+        {
+          avatar: '/pub.png',
+          id: 'agt-public-member',
+          title: 'Public member',
+          userId,
+          visibility: 'public',
+          workspaceId,
+        },
+        {
+          avatar: '/priv.png',
+          id: 'agt-demoted-member',
+          title: 'Demoted member',
+          userId,
+          visibility: 'private',
+          workspaceId,
+        },
+      ]);
+      await serverDB.insert(chatGroupsAgents).values([
+        {
+          agentId: 'agt-public-member',
+          chatGroupId: 'demotion-group',
+          enabled: true,
+          order: 0,
+          userId,
+          workspaceId,
+        },
+        {
+          agentId: 'agt-demoted-member',
+          chatGroupId: 'demotion-group',
+          enabled: true,
+          order: 1,
+          userId,
+          workspaceId,
+        },
+      ]);
+    });
+
+    it('drops the private member from every roster read for another member', async () => {
+      const [withDetails] = await workspaceChatGroupModel.queryWithMemberDetails();
+      expect(withDetails.agents.map((a: any) => a.id)).toEqual(['agt-public-member']);
+
+      const found = await workspaceChatGroupModel.findGroupWithAgents('demotion-group');
+      expect(found?.agents.map((a) => a.agentId)).toEqual(['agt-public-member']);
+
+      const groupAgents = await workspaceChatGroupModel.getGroupAgents('demotion-group');
+      expect(groupAgents.map((a) => a.agentId)).toEqual(['agt-public-member']);
+
+      const enabled = await workspaceChatGroupModel.getEnabledGroupAgents('demotion-group');
+      expect(enabled.map((a) => a.agentId)).toEqual(['agt-public-member']);
+
+      const withMeta = await workspaceChatGroupModel.getGroupAgentsWithMeta('demotion-group');
+      expect(withMeta.map((a) => a.agentId)).toEqual(['agt-public-member']);
+
+      const avatars = await workspaceChatGroupModel.getMemberAvatarsByGroupIds(['demotion-group']);
+      expect(avatars.get('demotion-group')).toEqual([
+        { avatar: '/pub.png', backgroundColor: null },
+      ]);
+    });
+
+    it('keeps the private member visible to its own owner', async () => {
+      const found = await ownerModel.findGroupWithAgents('demotion-group');
+      expect(found?.agents.map((a) => a.agentId)).toEqual([
+        'agt-public-member',
+        'agt-demoted-member',
+      ]);
+
+      const avatars = await ownerModel.getMemberAvatarsByGroupIds(['demotion-group']);
+      expect(avatars.get('demotion-group')).toHaveLength(2);
+    });
+
+    it('excludes groups reachable only through a non-visible member in getGroupsWithAgents', async () => {
+      const viaDemoted = await workspaceChatGroupModel.getGroupsWithAgents(['agt-demoted-member']);
+      expect(viaDemoted).toHaveLength(0);
+
+      const viaPublic = await workspaceChatGroupModel.getGroupsWithAgents(['agt-public-member']);
+      expect(viaPublic.map((g) => g.id)).toEqual(['demotion-group']);
+    });
+  });
+
+  describe('countGroupsBlockingAgentDemotion', () => {
+    const ownerModel = new ChatGroupModel(serverDB, userId, workspaceId);
+
+    const seedGroup = async (
+      groupId: string,
+      groupOwner: string,
+      visibility: 'private' | 'public',
+      role: string,
+    ) => {
+      await serverDB.insert(chatGroups).values({
+        id: groupId,
+        title: groupId,
+        userId: groupOwner,
+        visibility,
+        workspaceId,
+      });
+      await serverDB.insert(chatGroupsAgents).values({
+        agentId: 'agt-supervisor',
+        chatGroupId: groupId,
+        role,
+        userId: groupOwner,
+        workspaceId,
+      });
+    };
+
+    beforeEach(async () => {
+      await serverDB.insert(agentsTable).values({
+        id: 'agt-supervisor',
+        title: 'Supervisor agent',
+        userId,
+        visibility: 'public',
+        workspaceId,
+      });
+    });
+
+    it('blocks when the agent supervises a public group', async () => {
+      await seedGroup('public-supervised', userId, 'public', 'supervisor');
+
+      await expect(
+        ownerModel.countGroupsBlockingAgentDemotion('agt-supervisor', userId),
+      ).resolves.toBe(1);
+    });
+
+    it("blocks when the agent supervises another member's group, even a private one", async () => {
+      await seedGroup('others-private-supervised', otherUserId, 'private', 'supervisor');
+
+      await expect(
+        ownerModel.countGroupsBlockingAgentDemotion('agt-supervisor', userId),
+      ).resolves.toBe(1);
+    });
+
+    it('does not block for regular membership in a public group', async () => {
+      await seedGroup('public-participant', userId, 'public', 'participant');
+
+      await expect(
+        ownerModel.countGroupsBlockingAgentDemotion('agt-supervisor', userId),
+      ).resolves.toBe(0);
+    });
+
+    it("does not block for the owner's own private group", async () => {
+      await seedGroup('own-private-supervised', userId, 'private', 'supervisor');
+
+      await expect(
+        ownerModel.countGroupsBlockingAgentDemotion('agt-supervisor', userId),
+      ).resolves.toBe(0);
+    });
+
+    it('returns 0 outside a workspace', async () => {
+      await seedGroup('public-supervised-2', userId, 'public', 'supervisor');
+
+      await expect(
+        chatGroupModel.countGroupsBlockingAgentDemotion('agt-supervisor', userId),
+      ).resolves.toBe(0);
     });
   });
 });

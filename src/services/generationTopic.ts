@@ -1,15 +1,23 @@
-import { GenerationTopicItem } from '@/database/schemas';
+import { type GenerationTopicItem } from '@/database/schemas';
 import { lambdaClient } from '@/libs/trpc/client';
-import { UpdateTopicValue } from '@/server/routers/lambda/generationTopic';
-import { ImageGenerationTopic } from '@/types/generation';
+import { type UpdateTopicValue } from '@/server/routers/lambda/generationTopic';
+import { type ImageGenerationTopic } from '@/types/generation';
 
 export class ServerService {
-  async getAllGenerationTopics(): Promise<ImageGenerationTopic[]> {
-    return lambdaClient.generationTopic.getAllGenerationTopics.query();
+  async getAllGenerationTopics(
+    type?: 'image' | 'music' | 'video',
+  ): Promise<ImageGenerationTopic[]> {
+    return lambdaClient.generationTopic.getAllGenerationTopics.query(type ? { type } : undefined);
   }
 
-  async createTopic(): Promise<string> {
-    return lambdaClient.generationTopic.createTopic.mutate(undefined);
+  async createTopic(
+    type?: 'image' | 'music' | 'video',
+    visibility?: 'private' | 'public',
+    title?: string,
+  ): Promise<string> {
+    return lambdaClient.generationTopic.createTopic.mutate(
+      type || visibility || title ? { title, type, visibility } : undefined,
+    );
   }
 
   async updateTopic(id: string, data: UpdateTopicValue): Promise<GenerationTopicItem | undefined> {
@@ -22,6 +30,10 @@ export class ServerService {
 
   async deleteTopic(id: string): Promise<GenerationTopicItem | undefined> {
     return lambdaClient.generationTopic.deleteTopic.mutate({ id });
+  }
+
+  async setTopicVisibility(id: string, visibility: 'private' | 'public'): Promise<void> {
+    await lambdaClient.generationTopic.setTopicVisibility.mutate({ id, visibility });
   }
 }
 

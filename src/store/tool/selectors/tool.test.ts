@@ -1,20 +1,35 @@
-import { LobeChatPluginManifest, LobeChatPluginMeta } from '@lobehub/chat-plugin-sdk';
+import { type ToolManifest } from '@lobechat/types';
 import { describe, expect, it } from 'vitest';
 
+import { type ToolStoreState } from '../initialState';
 import { initialState } from '../initialState';
-import { ToolStoreState } from '../initialState';
 import { toolSelectors } from './tool';
+
+// Mock builtin skill for testing
+const mockBuiltinSkill = {
+  avatar: '🧪',
+  content: '# Test Skill',
+  description: 'A test skill',
+  identifier: 'test-skill',
+  name: 'Test Skill',
+  source: 'builtin' as const,
+};
 
 const mockState = {
   ...initialState,
+  builtinSkills: [mockBuiltinSkill],
   installedPlugins: [
     {
       identifier: 'plugin-1',
       manifest: {
         identifier: 'plugin-1',
         api: [{ name: 'api-1' }],
+        author: 'Test Author',
+        createdAt: '2024-01-01',
+        homepage: 'https://example.com/plugin-1',
         meta: { title: 'Plugin 1', description: 'Plugin 1 description' },
-      } as LobeChatPluginManifest,
+      } as ToolManifest,
+      runtimeType: 'standalone',
       type: 'plugin',
     },
     {
@@ -22,7 +37,10 @@ const mockState = {
       manifest: {
         identifier: 'plugin-2',
         api: [{ name: 'api-2' }],
-      } as LobeChatPluginManifest,
+        author: 'Another Author',
+        homepage: 'https://example.com/plugin-2',
+      } as ToolManifest,
+      runtimeType: 'default',
       type: 'plugin',
     },
     {
@@ -49,13 +67,15 @@ const mockState = {
         identifier: 'builtin-1',
         api: [{ name: 'builtin-api-1' }],
         meta: { title: 'Builtin 1', description: 'Builtin 1 description' },
-      } as LobeChatPluginManifest,
+      } as ToolManifest,
     },
   ],
   pluginInstallLoading: {
     'plugin-1': false,
     'plugin-2': true,
   },
+  pluginInstallErrors: {},
+  uninstalledBuiltinTools: [],
 } as ToolStoreState;
 
 describe('toolSelectors', () => {
@@ -74,12 +94,33 @@ describe('toolSelectors', () => {
       const result = toolSelectors.getManifestLoadingStatus('plugin-1')(mockState);
       expect(result).toBe('success');
     });
+
+    it('should return "error" when a refresh failed even if an old manifest remains', () => {
+      const state = {
+        ...mockState,
+        pluginInstallErrors: {
+          'plugin-1': { cause: 'Connection refused', message: 'fetchError' },
+        },
+      } as unknown as ToolStoreState;
+
+      expect(toolSelectors.getManifestLoadingStatus('plugin-1')(state)).toBe('error');
+      expect(toolSelectors.getPluginInstallError('plugin-1')(state)).toEqual({
+        cause: 'Connection refused',
+        message: 'fetchError',
+      });
+    });
   });
 
   describe('metaList and getMetaById', () => {
     it('should return the correct list of tool metadata', () => {
-      const result = toolSelectors.metaList()(mockState);
+      const result = toolSelectors.metaList(mockState);
       expect(result).toEqual([
+        {
+          author: 'LobeHub',
+          identifier: 'test-skill',
+          meta: { avatar: '🧪', description: 'A test skill', title: 'Test Skill' },
+          type: 'builtin',
+        },
         {
           type: 'builtin',
           author: 'LobeHub',
@@ -87,19 +128,32 @@ describe('toolSelectors', () => {
           meta: { title: 'Builtin 1', description: 'Builtin 1 description' },
         },
         {
-          identifier: 'plugin-1',
-          type: 'plugin',
-          meta: { title: 'Plugin 1', description: 'Plugin 1 description' },
-          title: 'Plugin 1',
+          author: 'Test Author',
+          createdAt: '2024-01-01',
           description: 'Plugin 1 description',
+          homepage: 'https://example.com/plugin-1',
+          identifier: 'plugin-1',
+          meta: { title: 'Plugin 1', description: 'Plugin 1 description' },
+          runtimeType: 'standalone',
+          title: 'Plugin 1',
+          type: 'plugin',
         },
         {
-          type: 'plugin',
+          author: 'Another Author',
+          createdAt: undefined,
+          homepage: 'https://example.com/plugin-2',
           identifier: 'plugin-2',
           meta: undefined,
+          runtimeType: 'default',
+          type: 'plugin',
         },
         {
+          author: undefined,
+          createdAt: undefined,
+          homepage: undefined,
           identifier: 'plugin-3',
+          meta: undefined,
+          runtimeType: undefined,
           type: 'customPlugin',
         },
       ]);
@@ -122,6 +176,9 @@ describe('toolSelectors', () => {
       expect(result).toEqual({
         identifier: 'plugin-1',
         api: [{ name: 'api-1' }],
+        author: 'Test Author',
+        createdAt: '2024-01-01',
+        homepage: 'https://example.com/plugin-1',
         meta: { title: 'Plugin 1', description: 'Plugin 1 description' },
       });
     });
@@ -150,5 +207,78 @@ describe('toolSelectors', () => {
     it('should return false if the tool does not exist', () => {
       expect(toolSelectors.isToolHasUI('non-existent')(mockState)).toBe(false);
     });
+  });
+});
+
+// Marketplace and custom MCP installs land only in `user_connectors` now: chat
+// must discover and activate them the way it did their plugin rows
+describe('MCP connectors in tool discovery', () => {
+  const connectorTool = (toolName: string) => ({
+    crudType: 'read',
+    description: `${toolName} tool`,
+    displayName: null,
+    id: toolName,
+    inputSchema: { properties: {}, type: 'object' },
+    permission: 'auto',
+    toolName,
+    userConnectorId: 'c',
+  });
+  const marketplace = (identifier: string, patch: Record<string, unknown> = {}) => ({
+    id: identifier,
+    identifier,
+    isEnabled: true,
+    mcpConnectionType: 'http',
+    mcpServerUrl: `https://${identifier}.example.com/mcp`,
+    metadata: { marketplaceInstalled: true },
+    name: `${identifier} name`,
+    sourceType: 'marketplace',
+    status: 'connected',
+    tools: [connectorTool('search')],
+    ...patch,
+  });
+  const state = (connectors: unknown[]) =>
+    ({ ...mockState, connectors }) as unknown as ToolStoreState;
+
+  it('lists a finished marketplace install and a custom connector', () => {
+    const s = state([
+      marketplace('notes-mcp'),
+      marketplace('my-custom', { metadata: {}, sourceType: 'custom' }),
+    ]);
+
+    const ids = toolSelectors.availableToolsForDiscovery(s).map((tool) => tool.identifier);
+
+    expect(ids).toEqual(expect.arrayContaining(['notes-mcp', 'my-custom']));
+    expect(toolSelectors.availableToolsForDiscovery(s)).toContainEqual({
+      description: 'notes-mcp name connector with 1 tools',
+      identifier: 'notes-mcp',
+      name: 'notes-mcp name',
+    });
+  });
+
+  it('leaves out unfinished installs, stdio servers off desktop, and plugin-served ids', () => {
+    const s = state([
+      marketplace('pending-mcp', { metadata: {}, status: 'disconnected' }),
+      marketplace('local-mcp', { mcpConnectionType: 'stdio', mcpServerUrl: null }),
+      // A plugin row still serves this identifier: one entry, the plugin's
+      marketplace('plugin-1'),
+    ]);
+
+    const ids = toolSelectors.availableToolsForDiscovery(s).map((tool) => tool.identifier);
+
+    expect(ids).not.toContain('pending-mcp');
+    expect(ids).not.toContain('local-mcp');
+    expect(ids.filter((id) => id === 'plugin-1')).toHaveLength(1);
+  });
+
+  it("reads a connector-only identifier's manifest from its connector", () => {
+    const s = state([marketplace('notes-mcp'), marketplace('plugin-1')]);
+
+    expect(toolSelectors.getManifestById('notes-mcp')(s)).toMatchObject({
+      api: [expect.objectContaining({ name: 'search' })],
+      identifier: 'notes-mcp',
+      type: 'mcp',
+    });
+    // A plugin row keeps serving its identifier
+    expect(toolSelectors.getManifestById('plugin-1')(s)?.api).toEqual([{ name: 'api-1' }]);
   });
 });

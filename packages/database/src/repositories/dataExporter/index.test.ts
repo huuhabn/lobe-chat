@@ -1,7 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { clientDB, initializeDB } from '@/database/client/db';
-
+import { getTestDB } from '../../core/getTestDB';
 import {
   agents,
   agentsKnowledgeBases,
@@ -11,21 +10,24 @@ import {
   globalFiles,
   knowledgeBaseFiles,
   knowledgeBases,
+  messagePlugins,
   messages,
   sessionGroups,
   sessions,
+  threads,
   topics,
-  userSettings,
   users,
+  userSettings,
+  workspaces,
 } from '../../schemas';
-import { LobeChatDatabase } from '../../type';
+import type { LobeChatDatabase } from '../../type';
 import { DATA_EXPORT_CONFIG, DataExporterRepos } from './index';
 
-let db = clientDB as LobeChatDatabase;
+let db: LobeChatDatabase;
 
-// 设置测试数据
+// Set up test data
 describe('DataExporterRepos', () => {
-  // 测试数据 ID
+  // Test data IDs
   const testIds = {
     userId: 'test-user-id',
     fileId: 'test-file-id',
@@ -37,25 +39,29 @@ describe('DataExporterRepos', () => {
     knowledgeBaseId: 'test-kb-id',
   };
 
-  // 设置测试环境
-  let userId: string = testIds.userId;
+  // Set up test environment
+  const userId: string = testIds.userId;
+
+  beforeAll(async () => {
+    db = await getTestDB();
+  }, 30000);
 
   const setupTestData = async () => {
     await db.transaction(async (trx) => {
-      // 用户数据
+      // User data
       await trx.insert(users).values({
         id: testIds.userId,
         username: 'testuser',
         email: 'test@example.com',
       });
 
-      // 用户设置
+      // User settings
       await trx.insert(userSettings).values({
         id: testIds.userId,
         general: { theme: 'light' },
       });
 
-      // 全局文件
+      // Global files
       await trx.insert(globalFiles).values({
         hashId: testIds.fileHash,
         fileType: 'text/plain',
@@ -64,7 +70,7 @@ describe('DataExporterRepos', () => {
         creator: testIds.userId,
       });
 
-      // 文件数据
+      // File data
       await trx.insert(files).values({
         id: testIds.fileId,
         userId: testIds.userId,
@@ -75,13 +81,13 @@ describe('DataExporterRepos', () => {
         url: 'https://example.com/test-file.txt',
       });
 
-      // 会话组
+      // Session groups
       await trx.insert(sessionGroups).values({
         name: 'Test Group',
         userId: testIds.userId,
       });
 
-      // 会话
+      // Sessions
       await trx.insert(sessions).values({
         id: testIds.sessionId,
         slug: 'test-session',
@@ -89,7 +95,7 @@ describe('DataExporterRepos', () => {
         userId: testIds.userId,
       });
 
-      // 主题
+      // Topics
       await trx.insert(topics).values({
         id: testIds.topicId,
         title: 'Test Topic',
@@ -97,7 +103,7 @@ describe('DataExporterRepos', () => {
         userId: testIds.userId,
       });
 
-      // 消息
+      // Messages
       await trx.insert(messages).values({
         id: testIds.messageId,
         role: 'user',
@@ -107,42 +113,42 @@ describe('DataExporterRepos', () => {
         topicId: testIds.topicId,
       });
 
-      // 代理
+      // Agents
       await trx.insert(agents).values({
         id: testIds.agentId,
         title: 'Test Agent',
         userId: testIds.userId,
       });
 
-      // 代理到会话的关联
+      // Agent-to-session associations
       await trx.insert(agentsToSessions).values({
         agentId: testIds.agentId,
         sessionId: testIds.sessionId,
         userId: testIds.userId,
       });
 
-      // 文件到会话的关联
+      // File-to-session associations
       await trx.insert(filesToSessions).values({
         fileId: testIds.fileId,
         sessionId: testIds.sessionId,
         userId: testIds.userId,
       });
 
-      // 知识库
+      // Knowledge bases
       await trx.insert(knowledgeBases).values({
         id: testIds.knowledgeBaseId,
         name: 'Test Knowledge Base',
         userId: testIds.userId,
       });
 
-      // 知识库文件
+      // Knowledge base files
       await trx.insert(knowledgeBaseFiles).values({
         knowledgeBaseId: testIds.knowledgeBaseId,
         fileId: testIds.fileId,
         userId: testIds.userId,
       });
 
-      // 代理知识库
+      // Agent knowledge bases
       await trx.insert(agentsKnowledgeBases).values({
         agentId: testIds.agentId,
         knowledgeBaseId: testIds.knowledgeBaseId,
@@ -152,12 +158,11 @@ describe('DataExporterRepos', () => {
   };
 
   beforeEach(async () => {
-    // 创建内存数据库
-    await initializeDB();
-
-    // 插入测试数据
+    // Clean up and insert test data
+    await db.delete(users);
+    await db.delete(globalFiles);
     await setupTestData();
-  });
+  }, 30000);
 
   afterEach(async () => {
     await db.delete(users);
@@ -168,17 +173,17 @@ describe('DataExporterRepos', () => {
 
   describe('export', () => {
     it('should export all user data correctly', async () => {
-      // 创建导出器实例
+      // Create exporter instance
       const dataExporter = new DataExporterRepos(db, userId);
 
-      // 执行导出
+      // Execute export
       const result = await dataExporter.export();
 
-      // 验证基础表导出结果
+      // Verify base table export results
       // expect(result).toHaveProperty('users');
       // expect(result.users).toHaveLength(1);
       // expect(result.users[0]).toHaveProperty('id', testIds.userId);
-      // expect(result.users[0]).not.toHaveProperty('userId'); // userId 字段应该被移除
+      // expect(result.users[0]).not.toHaveProperty('userId'); // the userId field should be removed
 
       expect(result).toHaveProperty('userSettings');
       expect(result.userSettings).toHaveLength(1);
@@ -210,7 +215,7 @@ describe('DataExporterRepos', () => {
       // expect(result.knowledgeBases).toHaveLength(1);
       // expect(result.knowledgeBases[0]).toHaveProperty('id', testIds.knowledgeBaseId);
 
-      // 验证关联表导出结果
+      // Verify relation table export results
       // expect(result).toHaveProperty('globalFiles');
       // expect(result.globalFiles).toHaveLength(1);
       // expect(result.globalFiles[0]).toHaveProperty('hashId', testIds.fileHash);
@@ -235,18 +240,18 @@ describe('DataExporterRepos', () => {
     });
 
     it('should handle empty database gracefully', async () => {
-      // 清空数据库
+      // Clear the database
 
       await db.delete(users);
       await db.delete(globalFiles);
 
-      // 创建导出器实例
+      // Create exporter instance
       const dataExporter = new DataExporterRepos(db, userId);
 
-      // 执行导出
+      // Execute export
       const result = await dataExporter.export();
 
-      // 验证所有表都返回空数组
+      // Verify all tables return empty arrays
       DATA_EXPORT_CONFIG.baseTables.forEach(({ table }) => {
         expect(result).toHaveProperty(table);
         expect(result[table]).toEqual([]);
@@ -259,42 +264,151 @@ describe('DataExporterRepos', () => {
     });
 
     it('should handle database query errors', async () => {
-      // 模拟查询错误
+      // Simulate a query error
       // @ts-ignore
       vi.spyOn(db.query.users, 'findMany').mockRejectedValueOnce(new Error('Database error'));
 
-      // 创建导出器实例
+      // Create exporter instance
       const dataExporter = new DataExporterRepos(db, userId);
 
-      // 执行导出
+      // Execute export
       const result = await dataExporter.export();
 
-      // 验证其他表仍然被导出
+      // Verify other tables are still exported
       expect(result).toHaveProperty('sessions');
       expect(result.sessions).toHaveLength(1);
     });
 
-    it.skip('should skip relation tables when source tables have no data', async () => {
-      // 删除文件数据，这将导致 globalFiles 表被跳过
-      await db.delete(files);
+    it('should skip relation tables when source tables have no data', async () => {
+      // Delete agents and sessions, so agentsToSessions source tables have no data
+      await db.delete(agentsToSessions);
+      await db.delete(agents);
+      await db.delete(messages);
+      await db.delete(topics);
+      await db.delete(sessions);
 
-      // 创建导出器实例
       const dataExporter = new DataExporterRepos(db, userId);
-
-      // 执行导出
       const result = await dataExporter.export();
 
-      // 验证文件表为空
-      // expect(result).toHaveProperty('files');
-      // expect(result.files).toEqual([]);
+      // agentsToSessions should be empty because both source tables have no data
+      expect(result).toHaveProperty('agentsToSessions');
+      expect(result.agentsToSessions).toEqual([]);
+    });
 
-      // 验证关联表也为空
-      // expect(result).toHaveProperty('globalFiles');
-      // expect(result.globalFiles).toEqual([]);
+    it('should handle base table query error gracefully', async () => {
+      // Mock a specific base table to throw an error
+      // @ts-ignore
+      vi.spyOn(db.query.userSettings, 'findMany').mockRejectedValueOnce(
+        new Error('DB connection failed'),
+      );
+
+      const dataExporter = new DataExporterRepos(db, userId);
+      const result = await dataExporter.export();
+
+      // userSettings should return empty array due to error handling
+      expect(result).toHaveProperty('userSettings');
+      expect(result.userSettings).toEqual([]);
+
+      // Other tables should still export successfully
+      expect(result.sessions).toHaveLength(1);
+    });
+
+    it('should handle relation table query error gracefully', async () => {
+      // Mock agentsToSessions query to throw an error
+      // @ts-ignore
+      vi.spyOn(db.query.agentsToSessions, 'findMany').mockRejectedValueOnce(
+        new Error('Relation query failed'),
+      );
+
+      const dataExporter = new DataExporterRepos(db, userId);
+      const result = await dataExporter.export();
+
+      // agentsToSessions should return empty array due to error handling
+      expect(result).toHaveProperty('agentsToSessions');
+      expect(result.agentsToSessions).toEqual([]);
+
+      // Base tables should still export successfully
+      expect(result.sessions).toHaveLength(1);
+    });
+
+    it('should exclude agent-share visitor rows from the creator export', async () => {
+      // Agent-share visitor conversations are persisted under the creator's
+      // userId with a non-null topics.senderId, so only the senderId marks them
+      // as third-party data.
+      const visitorUserId = 'share-visitor-user-id';
+
+      await db.transaction(async (trx) => {
+        await trx.insert(users).values({
+          email: 'visitor@example.com',
+          id: visitorUserId,
+          username: 'visitor',
+        });
+        await trx.insert(topics).values({
+          id: 'visitor-topic-id',
+          senderId: visitorUserId,
+          sessionId: testIds.sessionId,
+          title: 'Visitor Topic',
+          userId,
+        });
+        await trx.insert(messages).values({
+          content: 'Visitor message',
+          id: 'visitor-message-id',
+          role: 'user',
+          sessionId: testIds.sessionId,
+          topicId: 'visitor-topic-id',
+          userId,
+        });
+        await trx.insert(messagePlugins).values({
+          id: 'visitor-message-id',
+          identifier: 'visitor-plugin',
+          userId,
+        });
+        await trx.insert(threads).values({
+          id: 'visitor-thread-id',
+          title: 'Visitor Thread',
+          topicId: 'visitor-topic-id',
+          type: 'continuation',
+          userId,
+        });
+        await trx.insert(threads).values({
+          id: 'own-thread-id',
+          title: 'Own Thread',
+          topicId: testIds.topicId,
+          type: 'continuation',
+          userId,
+        });
+        await trx.insert(messagePlugins).values({
+          id: testIds.messageId,
+          identifier: 'own-plugin',
+          userId,
+        });
+      });
+
+      const result = await new DataExporterRepos(db, userId).export();
+
+      expect(result.topics.map((topic) => topic.id)).toEqual([testIds.topicId]);
+      expect(result.messages.map((message) => message.id)).toEqual([testIds.messageId]);
+      expect(result.threads.map((thread) => thread.id)).toEqual(['own-thread-id']);
+      expect(result.messagePlugins.map((plugin) => plugin.id)).toEqual([testIds.messageId]);
+    });
+
+    it('should correlate the message-ref visitor filter on the parent message id', () => {
+      // An uncorrelated `id IN (SELECT id FROM messages …)` under the OR runs as
+      // a hashed SubPlan over the whole messages table in production. The
+      // filter must look up each row's own parent message instead.
+      const repo = new DataExporterRepos(db, userId) as any;
+      const condition = repo.buildShareVisitorCondition(
+        { column: 'id', via: 'messageRef' },
+        messagePlugins,
+      );
+      const { sql } = db.select().from(messagePlugins).where(condition).toSQL();
+
+      expect(sql).toContain('"messages"."id" = "message_plugins"."id"');
+      expect(sql).not.toMatch(/"message_plugins"\."id" in \(select/i);
     });
 
     it('should export data for a different user', async () => {
-      // 创建另一个用户
+      // Create another user
       const anotherUserId = 'another-user-id';
       await db.transaction(async (trx) => {
         await trx.insert(users).values({
@@ -310,13 +424,13 @@ describe('DataExporterRepos', () => {
         });
       });
 
-      // 创建导出器实例，使用另一个用户 ID
+      // Create exporter instance using another user ID
       const dataExporter = new DataExporterRepos(db, anotherUserId);
 
-      // 执行导出
+      // Execute export
       const result = await dataExporter.export();
 
-      // 验证只导出了另一个用户的数据
+      // Verify only the other user's data was exported
       // expect(result).toHaveProperty('users');
       // expect(result.users).toHaveLength(1);
       // expect(result.users[0]).toHaveProperty('id', anotherUserId);
@@ -325,6 +439,141 @@ describe('DataExporterRepos', () => {
       expect(result.sessions).toHaveLength(1);
       expect(result.sessions[0]).not.toHaveProperty('userId', anotherUserId);
       expect(result.sessions[0]).toHaveProperty('id', 'another-session-id');
+    });
+
+    it('should not include workspace-scoped rows in personal export', async () => {
+      const workspaceId = 'workspace-export-filter';
+
+      await db.transaction(async (trx) => {
+        await trx.insert(workspaces).values({
+          id: workspaceId,
+          name: 'Workspace Export Filter',
+          primaryOwnerId: userId,
+          slug: workspaceId,
+        });
+        await trx.insert(agents).values({
+          id: 'workspace-agent-id',
+          title: 'Workspace Agent',
+          userId,
+          workspaceId,
+        });
+        await trx.insert(sessions).values({
+          id: 'workspace-session-id',
+          slug: 'workspace-session',
+          title: 'Workspace Session',
+          userId,
+          workspaceId,
+        });
+        await trx.insert(topics).values({
+          id: 'workspace-topic-id',
+          sessionId: 'workspace-session-id',
+          title: 'Workspace Topic',
+          userId,
+          workspaceId,
+        });
+        await trx.insert(messages).values({
+          content: 'Workspace message',
+          id: 'workspace-message-id',
+          role: 'user',
+          sessionId: 'workspace-session-id',
+          topicId: 'workspace-topic-id',
+          userId,
+          workspaceId,
+        });
+      });
+
+      const result = await new DataExporterRepos(db, userId).export();
+
+      expect(result.agents.map((agent) => agent.id)).toEqual([testIds.agentId]);
+      expect(result.sessions.map((session) => session.id)).toEqual([testIds.sessionId]);
+      expect(result.topics.map((topic) => topic.id)).toEqual([testIds.topicId]);
+      expect(result.messages.map((message) => message.id)).toEqual([testIds.messageId]);
+    });
+
+    it('should export only the selected workspace scope when workspaceId is provided', async () => {
+      const workspaceId = 'workspace-export-scope';
+      const otherWorkspaceId = 'workspace-export-other';
+
+      await db.transaction(async (trx) => {
+        await trx.insert(workspaces).values([
+          {
+            id: workspaceId,
+            name: 'Workspace Export Scope',
+            primaryOwnerId: userId,
+            slug: workspaceId,
+          },
+          {
+            id: otherWorkspaceId,
+            name: 'Other Workspace Export Scope',
+            primaryOwnerId: userId,
+            slug: otherWorkspaceId,
+          },
+        ]);
+        await trx.insert(agents).values([
+          {
+            id: 'workspace-agent-id',
+            title: 'Workspace Agent',
+            userId,
+            workspaceId,
+          },
+          {
+            id: 'other-workspace-agent-id',
+            title: 'Other Workspace Agent',
+            userId,
+            workspaceId: otherWorkspaceId,
+          },
+        ]);
+        await trx.insert(sessions).values([
+          {
+            id: 'workspace-session-id',
+            slug: 'workspace-session',
+            title: 'Workspace Session',
+            userId,
+            workspaceId,
+          },
+          {
+            id: 'other-workspace-session-id',
+            slug: 'other-workspace-session',
+            title: 'Other Workspace Session',
+            userId,
+            workspaceId: otherWorkspaceId,
+          },
+        ]);
+        await trx.insert(agentsToSessions).values({
+          agentId: 'workspace-agent-id',
+          sessionId: 'workspace-session-id',
+          userId,
+        });
+        await trx.insert(topics).values({
+          id: 'workspace-topic-id',
+          sessionId: 'workspace-session-id',
+          title: 'Workspace Topic',
+          userId,
+          workspaceId,
+        });
+        await trx.insert(messages).values({
+          content: 'Workspace message',
+          id: 'workspace-message-id',
+          role: 'user',
+          sessionId: 'workspace-session-id',
+          topicId: 'workspace-topic-id',
+          userId,
+          workspaceId,
+        });
+      });
+
+      const result = await new DataExporterRepos(db, userId, workspaceId).export();
+
+      expect(result.userSettings).toEqual([]);
+      expect(result.agents.map((agent) => agent.id)).toEqual(['workspace-agent-id']);
+      expect(result.sessions.map((session) => session.id)).toEqual(['workspace-session-id']);
+      expect(result.topics.map((topic) => topic.id)).toEqual(['workspace-topic-id']);
+      expect(result.messages.map((message) => message.id)).toEqual(['workspace-message-id']);
+      expect(result.agentsToSessions).toHaveLength(1);
+      expect(result.agentsToSessions[0]).toMatchObject({
+        agentId: 'workspace-agent-id',
+        sessionId: 'workspace-session-id',
+      });
     });
   });
 });

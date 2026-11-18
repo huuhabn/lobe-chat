@@ -1,32 +1,39 @@
 // @vitest-environment node
+import type { ImageGenerationTopic } from '@lobechat/types';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { LobeChatDatabase } from '../../type';import { FileService } from '@/server/services/file';
-import { ImageGenerationTopic } from '@/types/generation';
-
-import { generationBatches, generationTopics, generations, users } from '../../schemas';
-import { GenerationTopicItem } from '../../schemas/generation';
+import { getTestDB } from '../../core/getTestDB';
+import { generationBatches, generations, generationTopics, users, workspaces } from '../../schemas';
+import type { LobeChatDatabase } from '../../type';
 import { GenerationTopicModel } from '../generationTopic';
-import { getTestDB } from './_util';
 
 // Mock FileService
 const mockGetFullFileUrl = vi.fn();
 vi.mock('@/server/services/file', () => ({
-  FileService: vi.fn().mockImplementation(() => ({
-    getFullFileUrl: mockGetFullFileUrl,
-  })),
+  FileService: vi.fn(function () {
+    return {
+      getFullFileUrl: mockGetFullFileUrl,
+    };
+  }),
 }));
 
 const serverDB: LobeChatDatabase = await getTestDB();
 
 const userId = 'generation-topic-test-user';
 const otherUserId = 'other-user';
+const workspaceId = 'generation-topic-workspace';
 const generationTopicModel = new GenerationTopicModel(serverDB, userId);
 
 beforeEach(async () => {
   await serverDB.delete(users);
   await serverDB.insert(users).values([{ id: userId }, { id: otherUserId }]);
+  await serverDB.insert(workspaces).values({
+    id: workspaceId,
+    name: 'Generation Topic Workspace',
+    primaryOwnerId: userId,
+    slug: workspaceId,
+  });
 
   // Reset mocks before each test
   vi.clearAllMocks();
@@ -64,6 +71,20 @@ describe('GenerationTopicModel', () => {
       expect(result.id).toBeDefined();
       expect(result.title).toBe('');
       expect(result.userId).toBe(userId);
+    });
+
+    it('should create workspace topics as private by default', async () => {
+      const workspaceModel = new GenerationTopicModel(serverDB, userId, workspaceId);
+
+      const result = await workspaceModel.create('Workspace Private Topic');
+
+      expect(result.workspaceId).toBe(workspaceId);
+      expect(result.visibility).toBe('private');
+
+      const topic = await serverDB.query.generationTopics.findFirst({
+        where: eq(generationTopics.id, result.id),
+      });
+      expect(topic?.visibility).toBe('private');
     });
   });
 
@@ -137,9 +158,186 @@ describe('GenerationTopicModel', () => {
       expect(mockGetFullFileUrl).toHaveBeenCalledTimes(1);
     });
 
+    it('should filter topics by type when type parameter is provided', async () => {
+      await serverDB.insert(generationTopics).values([
+        {
+          id: 'image-topic',
+          userId,
+          title: 'Image Topic',
+          type: 'image',
+        },
+        {
+          id: 'video-topic',
+          userId,
+          title: 'Video Topic',
+          type: 'video',
+        },
+        {
+          id: 'image-topic-2',
+          userId,
+          title: 'Image Topic 2',
+          type: 'image',
+        },
+      ]);
+
+      const imageResult = await generationTopicModel.queryAll('image');
+
+      expect(imageResult).toHaveLength(2);
+      expect(imageResult.every((topic) => topic.type === 'image')).toBe(true);
+
+      const videoResult = await generationTopicModel.queryAll('video');
+
+      expect(videoResult).toHaveLength(1);
+      expect(videoResult[0].type).toBe('video');
+      expect(videoResult[0].id).toBe('video-topic');
+    });
+
     it('should return empty array if no topics exist', async () => {
       const result = await generationTopicModel.queryAll();
       expect(result).toHaveLength(0);
+    });
+
+    it('should hide other members private workspace topics while keeping public topics visible', async () => {
+      await serverDB.insert(generationTopics).values([
+        {
+          id: 'own-private-topic',
+          title: 'Own Private Topic',
+          type: 'image',
+          userId,
+          visibility: 'private',
+          workspaceId,
+        },
+        {
+          id: 'other-private-topic',
+          title: 'Other Private Topic',
+          type: 'image',
+          userId: otherUserId,
+          visibility: 'private',
+          workspaceId,
+        },
+        {
+          id: 'workspace-public-topic',
+          title: 'Workspace Public Topic',
+          type: 'image',
+          userId: otherUserId,
+          visibility: 'public',
+          workspaceId,
+        },
+      ]);
+
+      const workspaceModel = new GenerationTopicModel(serverDB, userId, workspaceId);
+      const result = await workspaceModel.queryAll('image');
+
+      expect(result.map((topic) => topic.id).toSorted()).toEqual([
+        'own-private-topic',
+        'workspace-public-topic',
+      ]);
+    });
+  });
+
+  describe('updateCoverIfEmpty', () => {
+    it('should set the cover when the topic has none', async () => {
+      const { id } = await generationTopicModel.create('Topic');
+
+      const result = await generationTopicModel.updateCoverIfEmpty(id, 'cover-key');
+
+      expect(result?.coverUrl).toBe('cover-key');
+    });
+
+    it('should keep an existing cover', async () => {
+      const { id } = await generationTopicModel.create('Topic');
+      await generationTopicModel.update(id, { coverUrl: 'first-cover' });
+
+      const result = await generationTopicModel.updateCoverIfEmpty(id, 'second-cover');
+
+      expect(result).toBeUndefined();
+      const topic = await serverDB.query.generationTopics.findFirst({
+        where: eq(generationTopics.id, id),
+      });
+      expect(topic?.coverUrl).toBe('first-cover');
+    });
+
+    it('should let only one concurrent writer set the cover', async () => {
+      const { id } = await generationTopicModel.create('Topic');
+
+      const results = await Promise.all(
+        ['cover-a', 'cover-b', 'cover-c'].map((key) =>
+          generationTopicModel.updateCoverIfEmpty(id, key),
+        ),
+      );
+
+      const winners = results.filter(Boolean);
+      expect(winners).toHaveLength(1);
+      const topic = await serverDB.query.generationTopics.findFirst({
+        where: eq(generationTopics.id, id),
+      });
+      expect(topic?.coverUrl).toBe(winners[0]!.coverUrl);
+    });
+
+    it('should not update topics of other users', async () => {
+      await serverDB
+        .insert(generationTopics)
+        .values({ id: 'other-cover-topic', title: 'Other', userId: otherUserId });
+
+      const result = await generationTopicModel.updateCoverIfEmpty('other-cover-topic', 'cover');
+
+      expect(result).toBeUndefined();
+    });
+  });
+
+  describe('replaceCover', () => {
+    it('should set the cover and return the one it displaced', async () => {
+      const { id } = await generationTopicModel.create('Topic');
+      await generationTopicModel.update(id, { coverUrl: 'old-cover' });
+
+      const result = await generationTopicModel.replaceCover(id, 'new-cover');
+
+      expect(result?.previousCoverUrl).toBe('old-cover');
+      expect(result?.topic.coverUrl).toBe('new-cover');
+    });
+
+    it('should return a null previous cover for a topic without one', async () => {
+      const { id } = await generationTopicModel.create('Topic');
+
+      const result = await generationTopicModel.replaceCover(id, 'new-cover');
+
+      expect(result?.previousCoverUrl).toBeNull();
+    });
+
+    it('should report each displaced cover once under concurrent replacements', async () => {
+      const { id } = await generationTopicModel.create('Topic');
+      await generationTopicModel.update(id, { coverUrl: 'cover-0' });
+
+      const results = await Promise.all(
+        ['cover-a', 'cover-b', 'cover-c'].map((key) => generationTopicModel.replaceCover(id, key)),
+      );
+
+      const topic = await serverDB.query.generationTopics.findFirst({
+        where: eq(generationTopics.id, id),
+      });
+      // Every cover except the final one is displaced by exactly one replacement
+      expect(results.map((r) => r?.previousCoverUrl).sort()).toEqual(
+        ['cover-0', 'cover-a', 'cover-b', 'cover-c']
+          .filter((key) => key !== topic?.coverUrl)
+          .sort(),
+      );
+    });
+
+    it('should not replace the cover of other users', async () => {
+      await serverDB.insert(generationTopics).values({
+        coverUrl: 'theirs',
+        id: 'other-replace-topic',
+        title: 'Other',
+        userId: otherUserId,
+      });
+
+      const result = await generationTopicModel.replaceCover('other-replace-topic', 'mine');
+
+      expect(result).toBeUndefined();
+      const topic = await serverDB.query.generationTopics.findFirst({
+        where: eq(generationTopics.id, 'other-replace-topic'),
+      });
+      expect(topic?.coverUrl).toBe('theirs');
     });
   });
 
@@ -148,7 +346,7 @@ describe('GenerationTopicModel', () => {
       // Create a test topic
       const { id } = await generationTopicModel.create('Original Title');
 
-      const updateData: Partial<ImageGenerationTopic> = {
+      const updateData: Pick<Partial<ImageGenerationTopic>, 'coverUrl' | 'title'> = {
         title: 'Updated Title',
         coverUrl: 'new-cover-key',
       };
@@ -175,7 +373,7 @@ describe('GenerationTopicModel', () => {
         .values({ id: 'other-topic', userId: otherUserId, title: 'Other User Topic' })
         .returning();
 
-      const updateData: Partial<ImageGenerationTopic> = {
+      const updateData: Pick<Partial<ImageGenerationTopic>, 'coverUrl' | 'title'> = {
         title: 'Hacked Title',
       };
 
@@ -282,6 +480,55 @@ describe('GenerationTopicModel', () => {
 
       // Should return undefined because topic doesn't exist with this invalid ID
       expect(result).toBeUndefined();
+    });
+
+    it('should collect coverUrl from video generation assets when deleting topic', async () => {
+      const { id: topicId } = await generationTopicModel.create('Topic with video generations');
+
+      // Create a generation batch associated with this topic
+      const [batch] = await serverDB
+        .insert(generationBatches)
+        .values({
+          userId,
+          generationTopicId: topicId,
+          provider: 'test-provider',
+          model: 'test-model',
+          prompt: 'Test video generation',
+          width: 1280,
+          height: 720,
+        })
+        .returning();
+
+      // Create a video generation with coverUrl in the asset
+      await serverDB.insert(generations).values([
+        {
+          userId,
+          generationBatchId: batch.id,
+          asyncTaskId: null,
+          fileId: null,
+          seed: 99999,
+          asset: {
+            type: 'video',
+            url: 'video-file.mp4',
+            thumbnailUrl: 'video-thumb.jpg',
+            coverUrl: 'video-cover.jpg',
+            width: 1280,
+            height: 720,
+            duration: 5,
+          },
+        },
+      ]);
+
+      const result = await generationTopicModel.delete(topicId);
+
+      expect(result).toBeDefined();
+      const deleteResult = result!;
+
+      // Should collect url, thumbnailUrl, AND coverUrl from the video asset
+      expect(deleteResult.filesToDelete).toContain('video-file.mp4');
+      expect(deleteResult.filesToDelete).toContain('video-thumb.jpg');
+      expect(deleteResult.filesToDelete).toContain('video-cover.jpg');
+      expect(deleteResult.filesToDelete).toHaveLength(3);
     });
 
     it('should collect file URLs from batches and generations when deleting topic with data', async () => {
@@ -406,5 +653,100 @@ describe('GenerationTopicModel', () => {
 
       expect(updateResult).toBeUndefined();
     });
+  });
+
+  describe('setVisibility', () => {
+    it('should flip the creator’s own public topic back to private', async () => {
+      const workspaceModel = new GenerationTopicModel(serverDB, userId, workspaceId);
+      const created = await workspaceModel.create('Public Topic', 'image', 'public');
+
+      const result = await workspaceModel.setVisibility(created.id, 'private');
+
+      expect(result?.visibility).toBe('private');
+      const row = await serverDB.query.generationTopics.findFirst({
+        where: eq(generationTopics.id, created.id),
+      });
+      expect(row?.visibility).toBe('private');
+    });
+
+    it('should be a no-op when the topic already sits at the target visibility', async () => {
+      const workspaceModel = new GenerationTopicModel(serverDB, userId, workspaceId);
+      const created = await workspaceModel.create('Already Private', 'image', 'private');
+      const before = await serverDB.query.generationTopics.findFirst({
+        where: eq(generationTopics.id, created.id),
+      });
+
+      const result = await workspaceModel.setVisibility(created.id, 'private');
+
+      // No row satisfied the (id, ownership, userId, visibility=public) filter,
+      // so RETURNING is empty and no row was touched.
+      expect(result).toBeUndefined();
+      const after = await serverDB.query.generationTopics.findFirst({
+        where: eq(generationTopics.id, created.id),
+      });
+      expect(after?.visibility).toBe('private');
+      expect(after?.updatedAt).toEqual(before?.updatedAt);
+    });
+
+    it('should refuse to flip another member’s topic', async () => {
+      const ownerModel = new GenerationTopicModel(serverDB, userId, workspaceId);
+      const memberModel = new GenerationTopicModel(serverDB, otherUserId, workspaceId);
+      const owned = await ownerModel.create('Owner Public', 'image', 'public');
+
+      const result = await memberModel.setVisibility(owned.id, 'private');
+      expect(result).toBeUndefined();
+
+      const row = await serverDB.query.generationTopics.findFirst({
+        where: eq(generationTopics.id, owned.id),
+      });
+      expect(row?.visibility).toBe('public');
+      expect(row?.userId).toBe(userId);
+    });
+  });
+});
+
+describe('GenerationTopicModel guards', () => {
+  it('finds an owned topic by id and hides another user topic', async () => {
+    const mine = await generationTopicModel.create('Mine');
+    const theirs = await new GenerationTopicModel(serverDB, otherUserId).create('Theirs');
+
+    await expect(generationTopicModel.findById(mine.id)).resolves.toMatchObject({
+      id: mine.id,
+      userId,
+    });
+    await expect(generationTopicModel.findById(theirs.id)).resolves.toBeUndefined();
+  });
+
+  it('publishes a private workspace topic', async () => {
+    const workspaceModel = new GenerationTopicModel(serverDB, userId, workspaceId);
+    const topic = await workspaceModel.create('Private', undefined, 'private');
+
+    const updated = await workspaceModel.setVisibility(topic.id, 'public');
+
+    expect(updated?.visibility).toBe('public');
+    const row = await serverDB.query.generationTopics.findFirst({
+      where: eq(generationTopics.id, topic.id),
+    });
+    expect(row?.visibility).toBe('public');
+  });
+
+  it('collects no cover url when the deleted topic has none', async () => {
+    const topic = await generationTopicModel.create('No cover');
+    await serverDB.insert(generationBatches).values({
+      generationTopicId: topic.id,
+      id: 'guard-batch',
+      model: 'test-model',
+      prompt: 'a cat',
+      provider: 'test-provider',
+      userId,
+    });
+    await serverDB
+      .insert(generations)
+      .values({ asset: { url: 'image.png' }, generationBatchId: 'guard-batch', userId });
+
+    const result = await generationTopicModel.delete(topic.id);
+
+    expect(result?.deletedTopic.id).toBe(topic.id);
+    expect(result?.filesToDelete).toEqual(['image.png']);
   });
 });

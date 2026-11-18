@@ -1,33 +1,55 @@
 import { subscribeWithSelector } from 'zustand/middleware';
 import { shallow } from 'zustand/shallow';
 import { createWithEqualityFn } from 'zustand/traditional';
-import { StateCreator } from 'zustand/vanilla';
+import { type StateCreator } from 'zustand/vanilla';
 
 import { createDevtools } from '../middleware/createDevtools';
-import { ImageStoreState, initialState } from './initialState';
-import { CreateImageAction, createCreateImageSlice } from './slices/createImage/action';
-import { GenerationBatchAction, createGenerationBatchSlice } from './slices/generationBatch/action';
-import {
-  GenerationConfigAction,
-  createGenerationConfigSlice,
-} from './slices/generationConfig/action';
-import { GenerationTopicAction, createGenerationTopicSlice } from './slices/generationTopic/action';
+import { expose } from '../middleware/expose';
+import { flattenActions } from '../utils/flattenActions';
+import { type ResetableStore, ResetableStoreAction } from '../utils/resetableStore';
+import { type ImageStoreState } from './initialState';
+import { initialState } from './initialState';
+import { type CreateImageAction } from './slices/createImage/action';
+import { createCreateImageSlice } from './slices/createImage/action';
+import { type GenerationBatchAction } from './slices/generationBatch/action';
+import { createGenerationBatchSlice } from './slices/generationBatch/action';
+import { type GenerationConfigAction } from './slices/generationConfig/action';
+import { createGenerationConfigSlice } from './slices/generationConfig/action';
+import { type GenerationTopicAction } from './slices/generationTopic/action';
+import { createGenerationTopicSlice } from './slices/generationTopic/action';
 
 //  ===============  aggregate createStoreFn ============ //
 
 export interface ImageStore
-  extends GenerationConfigAction,
+  extends
+    GenerationConfigAction,
     GenerationTopicAction,
     GenerationBatchAction,
     CreateImageAction,
+    ResetableStore,
     ImageStoreState {}
 
-const createStore: StateCreator<ImageStore, [['zustand/devtools', never]]> = (...parameters) => ({
+type ImageStoreAction = GenerationConfigAction &
+  GenerationTopicAction &
+  GenerationBatchAction &
+  CreateImageAction &
+  ResetableStore;
+
+class ImageStoreResetAction extends ResetableStoreAction<ImageStore> {
+  protected readonly resetActionName = 'resetImageStore';
+}
+
+const createStore: StateCreator<ImageStore, [['zustand/devtools', never]]> = (
+  ...parameters: Parameters<StateCreator<ImageStore, [['zustand/devtools', never]]>>
+) => ({
   ...initialState,
-  ...createGenerationConfigSlice(...parameters),
-  ...createGenerationTopicSlice(...parameters),
-  ...createGenerationBatchSlice(...parameters),
-  ...createCreateImageSlice(...parameters),
+  ...flattenActions<ImageStoreAction>([
+    createGenerationConfigSlice(...parameters),
+    createGenerationTopicSlice(...parameters),
+    createGenerationBatchSlice(...parameters),
+    createCreateImageSlice(...parameters),
+    new ImageStoreResetAction(...parameters),
+  ]),
 });
 
 //  ===============  implement useStore ============ //
@@ -38,5 +60,7 @@ export const useImageStore = createWithEqualityFn<ImageStore>()(
   subscribeWithSelector(devtools(createStore)),
   shallow,
 );
+
+expose('image', useImageStore);
 
 export const getImageStoreState = () => useImageStore.getState();

@@ -1,6 +1,5 @@
+import type { UIChatMessage } from '@lobechat/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-import type { ChatMessage } from '@/types/index';
 
 import { filterMessagesForAgent } from '../chatMessages';
 import { buildGroupChatSystemPrompt } from './index';
@@ -13,14 +12,13 @@ describe('buildGroupChatSystemPrompt', () => {
     vi.spyOn(Date, 'now').mockReturnValue(mockTimestamp);
   });
 
-  const messages: ChatMessage[] = [
+  const messages: UIChatMessage[] = [
     {
       id: 'm1',
       role: 'user',
       content: 'Hello everyone',
       createdAt: mockTimestamp,
       updatedAt: mockTimestamp,
-      meta: {},
     },
     {
       id: 'm2',
@@ -29,7 +27,6 @@ describe('buildGroupChatSystemPrompt', () => {
       content: 'Hi! I can help with that.',
       createdAt: mockTimestamp,
       updatedAt: mockTimestamp,
-      meta: {},
     },
   ];
 
@@ -109,13 +106,12 @@ describe('filterMessagesForAgent', () => {
     role: 'user' | 'assistant' | 'system',
     content: string,
     options?: { agentId?: string; targetId?: string },
-  ): ChatMessage => ({
+  ): UIChatMessage => ({
     id,
     role,
     content,
     createdAt: mockTimestamp,
     updatedAt: mockTimestamp,
-    meta: {},
     ...options,
   });
 

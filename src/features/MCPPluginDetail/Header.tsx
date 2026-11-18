@@ -1,35 +1,61 @@
 'use client';
 
 import { Github } from '@lobehub/icons';
-import { ActionIcon, Avatar, Button, Icon, Tag, Text, Tooltip } from '@lobehub/ui';
-import { createStyles, useResponsive } from 'antd-style';
-import { CircleIcon, DotIcon, DownloadIcon, ScaleIcon, StarIcon } from 'lucide-react';
-import Link from 'next/link';
+import {
+  ActionIcon,
+  Avatar,
+  Button,
+  createStaticStyles,
+  cssVar,
+  Flexbox,
+  Icon,
+  stopPropagation,
+  Tag,
+  Text,
+  toast,
+  Tooltip,
+  useResponsive,
+} from '@lobehub/ui';
+import { cssVar as vars } from '@lobehub/ui/stylex/cssVar.stylex';
+import * as stylex from '@stylexjs/stylex';
+import {
+  BookmarkIcon,
+  BookmarkMinusIcon,
+  CircleIcon,
+  DotIcon,
+  DownloadIcon,
+  ScaleIcon,
+  StarIcon,
+} from 'lucide-react';
 import qs from 'query-string';
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Flexbox } from 'react-layout-kit';
+import { Link } from 'react-router';
 
 import OfficialIcon from '@/components/OfficialIcon';
 import Scores from '@/features/MCP/Scores';
 import { getLanguageColor, getRecommendedDeployment } from '@/features/MCP/utils';
 import { useCategory } from '@/hooks/useMCPCategory';
+import { useMarketAuth } from '@/layout/AuthProvider/MarketAuth';
+import { socialService } from '@/services/social';
+import { useDiscoverStore } from '@/store/discover';
+import { socialSelectors } from '@/store/discover/selectors';
 
 import InstallationIcon from '../../components/MCPDepsIcon';
 import PublishedTime from '../../components/PublishedTime';
 import { useDetailContext } from './DetailProvider';
 
-const useStyles = createStyles(({ css, token }) => {
+const timeStyles = stylex.create({
+  time: { fontSize: '12px', color: vars.colorTextDescription },
+});
+
+const styles = createStaticStyles(({ css }) => {
   return {
     desc: css`
-      color: ${token.colorTextSecondary};
-    `,
-    time: css`
-      font-size: 12px;
-      color: ${token.colorTextDescription};
+      color: ${cssVar.colorTextSecondary};
     `,
     version: css`
-      font-family: ${token.fontFamilyCode};
+      font-family: ${cssVar.fontFamilyCode};
       font-size: 13px;
     `,
   };
@@ -37,6 +63,7 @@ const useStyles = createStyles(({ css, token }) => {
 
 const Header = memo<{ inModal?: boolean; mobile?: boolean }>(({ mobile: isMobile, inModal }) => {
   const { t } = useTranslation('discover');
+
   const {
     name,
     author,
@@ -57,8 +84,41 @@ const Header = memo<{ inModal?: boolean; mobile?: boolean }>(({ mobile: isMobile
     isClaimed,
     isOfficial,
   } = useDetailContext();
-  const { styles, theme } = useStyles();
   const { mobile = isMobile } = useResponsive();
+  const { isAuthenticated, signIn, session } = useMarketAuth();
+  const [favoriteLoading, setFavoriteLoading] = useState(false);
+
+  // Set access token for social service
+  if (session?.accessToken) {
+    socialService.setAccessToken(session.accessToken);
+  }
+
+  const useFavoriteStatus = useDiscoverStore((s) => s.useFavoriteStatus);
+  const { queryKey: favoriteKey } = useFavoriteStatus('plugin', identifier, isAuthenticated);
+  const favoriteStatus = useDiscoverStore(socialSelectors.favoriteStatus(favoriteKey));
+  const setFavorite = useDiscoverStore((s) => s.setFavorite);
+
+  const isFavorited = favoriteStatus?.isFavorited ?? false;
+
+  const handleFavoriteClick = async () => {
+    if (!isAuthenticated) {
+      await signIn('mcp');
+      return;
+    }
+
+    if (!identifier) return;
+
+    setFavoriteLoading(true);
+    try {
+      await setFavorite('plugin', identifier, !isFavorited);
+      toast.success(t(isFavorited ? 'assistant.unfavoriteSuccess' : 'assistant.favoriteSuccess'));
+    } catch (error) {
+      console.error('Favorite action failed:', error);
+      toast.error(t('assistant.favoriteFailed'));
+    } finally {
+      setFavoriteLoading(false);
+    }
+  };
 
   const recommendedDeployment = getRecommendedDeployment(deploymentOptions);
   const categories = useCategory();
@@ -80,12 +140,12 @@ const Header = memo<{ inModal?: boolean; mobile?: boolean }>(({ mobile: isMobile
 
   const cateButton = (
     <Link
-      href={qs.stringifyUrl({
+      to={qs.stringifyUrl({
         query: { category: cate?.key },
-        url: '/discover/mcp',
+        url: '/community/mcp',
       })}
     >
-      <Button icon={cate?.icon} size={'middle'} variant={'outlined'}>
+      <Button icon={cate?.icon} size={'middle'}>
         {cate?.label}
       </Button>
     </Link>
@@ -93,8 +153,8 @@ const Header = memo<{ inModal?: boolean; mobile?: boolean }>(({ mobile: isMobile
 
   return (
     <Flexbox gap={12}>
-      <Flexbox align={'flex-start'} gap={16} horizontal width={'100%'}>
-        <Avatar avatar={icon} size={mobile ? 48 : 64} />
+      <Flexbox horizontal align={'flex-start'} gap={16} width={'100%'}>
+        <Avatar avatar={icon} shape={'square'} size={mobile ? 48 : 64} />
         <Flexbox
           flex={1}
           gap={4}
@@ -103,9 +163,9 @@ const Header = memo<{ inModal?: boolean; mobile?: boolean }>(({ mobile: isMobile
           }}
         >
           <Flexbox
+            horizontal
             align={'center'}
             gap={8}
-            horizontal
             justify={'space-between'}
             style={{
               overflow: 'hidden',
@@ -113,18 +173,18 @@ const Header = memo<{ inModal?: boolean; mobile?: boolean }>(({ mobile: isMobile
             }}
           >
             <Flexbox
+              horizontal
               align={'center'}
               flex={1}
               gap={12}
-              horizontal
               style={{
                 overflow: 'hidden',
                 position: 'relative',
               }}
             >
               <Text
-                as={'h1'}
                 ellipsis
+                as={'h1'}
                 style={{ fontSize: inModal ? 20 : mobile ? 18 : 24, margin: 0 }}
                 title={identifier}
               >
@@ -137,53 +197,57 @@ const Header = memo<{ inModal?: boolean; mobile?: boolean }>(({ mobile: isMobile
               )}
               {!mobile && scores}
             </Flexbox>
-            <Flexbox align={'center'} gap={6} horizontal>
+            <Flexbox horizontal align={'center'} gap={6}>
               {recommendedDeployment?.installationMethod && (
                 <InstallationIcon type={recommendedDeployment.installationMethod} />
               )}
               {github?.url && (
-                <Link href={github.url} onClick={(e) => e.stopPropagation()} target={'_blank'}>
-                  <ActionIcon fill={theme.colorTextDescription} icon={Github} />
-                </Link>
+                <a href={github.url} rel="noreferrer" target={'_blank'} onClick={stopPropagation}>
+                  <ActionIcon fill={cssVar.colorTextDescription} icon={Github} />
+                </a>
               )}
+              <Tooltip title={isFavorited ? t('assistant.unfavorite') : t('assistant.favorite')}>
+                <ActionIcon
+                  icon={isFavorited ? BookmarkMinusIcon : BookmarkIcon}
+                  loading={favoriteLoading}
+                  variant={isFavorited ? 'outlined' : undefined}
+                  onClick={handleFavoriteClick}
+                />
+              </Tooltip>
             </Flexbox>
           </Flexbox>
-          <Flexbox align={'center'} gap={4} horizontal>
+          <Flexbox horizontal align={'center'} gap={4}>
             <div className={styles.version}>{version}</div>
             <Icon icon={DotIcon} />
             {author?.url ? (
-              <Link href={author?.url} target={'_blank'}>
+              <a href={author?.url} rel="noreferrer" target={'_blank'}>
                 {author?.name}
-              </Link>
+              </a>
             ) : (
               <span>{author?.name}</span>
             )}
             {isClaimed && <Tag size={'small'}>{t('isClaimed')}</Tag>}
             <Icon icon={DotIcon} />
-            <PublishedTime
-              className={styles.time}
-              date={(updatedAt || createdAt) as string}
-              template={'MMM DD, YYYY'}
-            />
+            <PublishedTime date={(updatedAt || createdAt) as string} xstyle={timeStyles.time} />
           </Flexbox>
         </Flexbox>
       </Flexbox>
       <Flexbox
+        horizontal
         align={'center'}
         gap={mobile ? 12 : 24}
-        horizontal
-        style={{
-          color: theme.colorTextSecondary,
-        }}
         wrap={'wrap'}
+        style={{
+          color: cssVar.colorTextSecondary,
+        }}
       >
         {mobile && scores}
         {!mobile && cateButton}
-        <Flexbox align={'center'} gap={mobile ? 12 : 24} horizontal wrap={'wrap'}>
+        <Flexbox horizontal align={'center'} gap={mobile ? 12 : 24} wrap={'wrap'}>
           {Boolean(github?.language) && (
-            <Flexbox align={'center'} gap={6} horizontal>
+            <Flexbox horizontal align={'center'} gap={6}>
               <Icon
-                color={theme.colorFillTertiary}
+                color={cssVar.colorFillTertiary}
                 fill={getLanguageColor(github?.language)}
                 icon={CircleIcon}
                 size={12}
@@ -192,19 +256,19 @@ const Header = memo<{ inModal?: boolean; mobile?: boolean }>(({ mobile: isMobile
             </Flexbox>
           )}
           {Boolean(github?.license) && (
-            <Flexbox align={'center'} gap={6} horizontal>
+            <Flexbox horizontal align={'center'} gap={6}>
               <Icon icon={ScaleIcon} size={14} />
               {github?.license}
             </Flexbox>
           )}
           {Boolean(installCount) && (
-            <Flexbox align={'center'} gap={6} horizontal>
+            <Flexbox horizontal align={'center'} gap={6}>
               <Icon icon={DownloadIcon} size={14} />
               {installCount}
             </Flexbox>
           )}
           {Boolean(github?.stars) && (
-            <Flexbox align={'center'} gap={6} horizontal>
+            <Flexbox horizontal align={'center'} gap={6}>
               <Icon icon={StarIcon} size={14} />
               {github?.stars}
             </Flexbox>

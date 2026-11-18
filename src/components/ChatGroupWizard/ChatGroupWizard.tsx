@@ -1,55 +1,139 @@
 'use client';
 
-import { Avatar, Collapse, GroupAvatar, List, Modal, SearchBar, Text, Tooltip } from '@lobehub/ui';
-import { Button, Checkbox, Empty, Switch } from 'antd';
-import { createStyles, useTheme } from 'antd-style';
-import { omit } from 'lodash-es';
+import {
+  Accordion,
+  Button,
+  Checkbox,
+  Empty,
+  Flexbox,
+  List,
+  ModalFooter,
+  SearchBar,
+  stopPropagation,
+  Switch,
+  Text,
+  Tooltip,
+} from '@lobehub/ui';
+import { cssVar } from '@lobehub/ui/stylex/cssVar.stylex';
+import * as stylex from '@stylexjs/stylex';
+import { omit } from 'es-toolkit/compat';
 import { Users } from 'lucide-react';
-import { ChangeEvent, memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { type ChangeEvent } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Flexbox } from 'react-layout-kit';
 
-import { DEFAULT_AVATAR, DEFAULT_SUPERVISOR_AVATAR } from '@/const/meta';
+import AgentAvatar from '@/components/AgentAvatar';
+import ImperativeModal from '@/components/ImperativeModal';
+import GroupAvatar from '@/features/GroupAvatar';
 import ModelSelect from '@/features/ModelSelect';
 import { useEnabledChatModels } from '@/hooks/useEnabledChatModels';
 import { useSessionStore } from '@/store/session';
-import { LobeAgentSession, LobeSessionType } from '@/types/session';
+import { sx } from '@/styles/sx';
+import { type LobeAgentSession } from '@/types/session';
+import { LobeSessionType } from '@/types/session';
 
-import { GroupTemplate, useGroupTemplates } from './templates';
+import { type GroupTemplate } from './templates';
+import { useGroupTemplates } from './templates';
+
+const styles = stylex.create({
+  container: {
+    display: 'flex',
+    flexDirection: 'row',
+    height: '500px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: cssVar.colorBorderSecondary,
+    borderRadius: cssVar.borderRadius,
+  },
+  description: {
+    fontSize: '12px',
+    lineHeight: 1.2,
+    color: cssVar.colorTextSecondary,
+  },
+  hostCard: {
+    marginBlockStart: cssVar.paddingSM,
+    marginInline: cssVar.paddingSM,
+    padding: cssVar.padding,
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: cssVar.colorBorderSecondary,
+    borderRadius: cssVar.borderRadiusLG,
+    backgroundColor: cssVar.colorFillTertiary,
+    backgroundImage: 'none',
+  },
+  leftColumn: {
+    userSelect: 'none',
+    overflowY: 'auto',
+    flex: '1',
+    padding: '0',
+    borderInlineEndWidth: '1px',
+    borderInlineEndStyle: 'solid',
+    borderInlineEndColor: cssVar.colorBorderSecondary,
+  },
+  listItem: {
+    cursor: 'pointer',
+    position: 'relative',
+    marginBlock: '2px',
+    padding: cssVar.paddingSM,
+    borderRadius: cssVar.borderRadius,
+    transition: 'all 0.2s ease',
+    backgroundColor: { 'default': null, ':hover': cssVar.colorFillTertiary },
+    backgroundImage: { 'default': null, ':hover': 'none' },
+  },
+  memberDescription: {
+    display: 'block',
+    paddingInlineEnd: '48px',
+  },
+  modelSelectDisabled: {
+    pointerEvents: 'none',
+  },
+  rightColumn: {
+    overflowY: 'auto',
+    display: 'flex',
+    flex: '1',
+    flexDirection: 'column',
+    padding: '0',
+  },
+  title: {
+    fontSize: '14px',
+    fontWeight: 500,
+  },
+});
+
+const memberDescriptionClass = stylex.props(styles.description, styles.memberDescription).className;
 
 const TemplateItem = memo<{
-  cx: (..._args: any[]) => string;
   isSelected: boolean;
   onToggle: (_templateId: string) => void;
-  styles: Record<string, string>;
   template: GroupTemplate;
-}>(({ template, isSelected, onToggle, styles, cx }) => {
+}>(({ template, isSelected, onToggle }) => {
   const { t } = useTranslation('chat');
 
   return (
-    <div className={cx(styles.listItem)} onClick={() => onToggle(template.id)}>
-      <Flexbox align="center" gap={12} horizontal width="100%">
+    <div {...stylex.props(styles.listItem)} onClick={() => onToggle(template.id)}>
+      <Flexbox horizontal align="center" gap={12} width="100%">
         <Checkbox
           checked={isSelected}
           onChange={() => onToggle(template.id)}
-          onClick={(e) => e.stopPropagation()}
+          onClick={stopPropagation}
         />
         <GroupAvatar
+          size={40}
           avatars={template.members
             .filter((member) => member !== null && member !== undefined)
             .map((member) => ({
-              avatar: member.avatar || DEFAULT_AVATAR,
+              avatar: member.avatar || undefined,
               background: member.backgroundColor || undefined,
+              seed: member.title,
             }))}
-          size={40}
         />
         <Flexbox flex={1} gap={2}>
-          <Text className={styles.title}>{template.title}</Text>
-          <Text className={styles.description} ellipsis>
+          <Text className={stylex.props(styles.title).className}>{template.title}</Text>
+          <Text ellipsis className={stylex.props(styles.description).className}>
             {template.description}
           </Text>
-          <Flexbox align="center" gap={4} horizontal>
-            <Users size={11} style={{ color: '#999' }} />
+          <Flexbox horizontal align="center" gap={4}>
+            <Users size={11} style={{ color: cssVar.colorTextTertiary }} />
             <Text style={{ fontSize: 11 }} type="secondary">
               {t('groupWizard.memberCount', {
                 count: template.members.filter((member) => member !== null && member !== undefined)
@@ -65,33 +149,38 @@ const TemplateItem = memo<{
 
 const ExistingMemberItem = memo<{
   agent: LobeAgentSession;
-  cx: (..._args: any[]) => string;
   isSelected: boolean;
   onToggle: (_agentId: string) => void;
-  styles: Record<string, string>;
-}>(({ agent, isSelected, onToggle, styles, cx }) => {
+}>(({ agent, isSelected, onToggle }) => {
   const { t } = useTranslation(['chat', 'common']);
   const agentId = agent.config?.id;
   const title = agent.meta?.title || t('defaultSession', { ns: 'common' });
   const description = agent.meta?.description || '';
-  const avatar = agent.meta?.avatar || DEFAULT_AVATAR;
+  const avatar = agent.meta?.avatar;
   const avatarBackground = agent.meta?.backgroundColor;
 
   if (!agentId) return null;
 
   return (
-    <div className={cx(styles.listItem)} onClick={() => onToggle(agentId)}>
-      <Flexbox align="center" gap={12} horizontal width="100%">
+    <div {...stylex.props(styles.listItem)} onClick={() => onToggle(agentId)}>
+      <Flexbox horizontal align="center" gap={12} width="100%">
         <Checkbox
           checked={isSelected}
           onChange={() => onToggle(agentId)}
-          onClick={(e) => e.stopPropagation()}
+          onClick={stopPropagation}
         />
-        <Avatar avatar={avatar} background={avatarBackground} shape="circle" size={40} />
+        <AgentAvatar
+          agentId={agentId}
+          avatar={avatar}
+          background={avatarBackground}
+          name={title}
+          shape={'circle'}
+          size={40}
+        />
         <Flexbox flex={1} gap={2} style={{ minWidth: 0 }}>
-          <Text className={styles.title}>{title}</Text>
+          <Text className={stylex.props(styles.title).className}>{title}</Text>
           {description && (
-            <Text className={styles.description} ellipsis>
+            <Text ellipsis className={stylex.props(styles.description).className}>
               {description}
             </Text>
           )}
@@ -101,93 +190,15 @@ const ExistingMemberItem = memo<{
   );
 });
 
-const useStyles = createStyles(({ css, token }) => ({
-  container: css`
-    display: flex;
-    flex-direction: row;
-
-    height: 500px;
-    border: 1px solid ${token.colorBorderSecondary};
-    border-radius: ${token.borderRadius}px;
-  `,
-  description: css`
-    font-size: 12px;
-    line-height: 1.2;
-    color: ${token.colorTextSecondary};
-  `,
-  hostCard: css`
-    margin-block-start: ${token.paddingSM}px;
-    margin-inline: ${token.paddingSM}px;
-    padding: ${token.padding}px;
-    border: 1px solid ${token.colorBorderSecondary};
-    border-radius: ${token.borderRadiusLG}px;
-
-    background: ${token.colorFillTertiary};
-  `,
-  leftColumn: css`
-    user-select: none;
-
-    overflow-y: auto;
-    flex: 1;
-
-    padding: 0;
-    border-inline-end: 1px solid ${token.colorBorderSecondary};
-  `,
-  listHeader: css`
-    padding: 0;
-    color: ${token.colorTextDescription};
-  `,
-  listItem: css`
-    cursor: pointer;
-
-    position: relative;
-
-    margin-block: 2px;
-    padding: ${token.paddingSM}px !important;
-    border-radius: ${token.borderRadius}px;
-
-    transition: all 0.2s ease;
-
-    &:hover {
-      background: ${token.colorFillTertiary};
-    }
-  `,
-  memberDescription: css`
-    display: block;
-    padding-inline-end: 48px;
-  `,
-  modelSelectDisabled: css`
-    pointer-events: none;
-  `,
-  rightColumn: css`
-    overflow-y: auto;
-    display: flex;
-    flex: 1;
-    flex-direction: column;
-
-    padding: 0;
-  `,
-  title: css`
-    font-size: 14px;
-    font-weight: 500;
-  `,
-}));
-
 export interface ChatGroupWizardProps {
   /**
    * External loading state for template creation (controlled by parent)
    */
   isCreatingFromTemplate?: boolean;
   onCancel: () => void;
-  onCreateCustom: (
-    selectedAgents: string[],
-    hostConfig?: { model?: string; provider?: string },
-    enableSupervisor?: boolean,
-  ) => void | Promise<void>;
+  onCreateCustom: (selectedAgents: string[]) => void | Promise<void>;
   onCreateFromTemplate: (
     templateId: string,
-    hostConfig?: { model?: string; provider?: string },
-    enableSupervisor?: boolean,
     selectedMemberTitles?: string[],
   ) => void | Promise<void>;
   open: boolean;
@@ -202,8 +213,6 @@ const ChatGroupWizard = memo<ChatGroupWizardProps>(
     isCreatingFromTemplate: externalLoading,
   }) => {
     const { t } = useTranslation(['chat', 'common']);
-    const { styles, cx } = useStyles();
-    const theme = useTheme();
     const groupTemplates = useGroupTemplates();
     const enabledModels = useEnabledChatModels();
     const agentSessions = useSessionStore((s) =>
@@ -213,11 +222,6 @@ const ChatGroupWizard = memo<ChatGroupWizardProps>(
     const visibleAgentSessions = useMemo(
       () => agentSessions.filter((session) => !session.config?.virtual),
       [agentSessions],
-    );
-
-    const memberDescriptionClass = useMemo(
-      () => cx(styles.description, styles.memberDescription),
-      [cx, styles.description, styles.memberDescription],
     );
 
     const defaultModel = useMemo(() => {
@@ -233,6 +237,7 @@ const ChatGroupWizard = memo<ChatGroupWizardProps>(
       return { model: undefined, provider: undefined };
     }, [enabledModels]);
 
+    const [inputValue, setInputValue] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedTemplate, setSelectedTemplate] = useState<string>('');
     const [selectedAgents, setSelectedAgents] = useState<string[]>([]);
@@ -243,6 +248,8 @@ const ChatGroupWizard = memo<ChatGroupWizardProps>(
     );
     const [isCreatingCustom, setIsCreatingCustom] = useState(false);
     const [activePanel, setActivePanel] = useState<'templates' | 'agents'>('templates');
+
+    const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const isCreatingFromTemplate = externalLoading ?? false;
 
@@ -275,14 +282,20 @@ const ChatGroupWizard = memo<ChatGroupWizardProps>(
       setSelectedAgents((prev) => prev.filter((id) => id !== agentId));
     }, []);
 
-    const handleReset = () => {
+    const handleReset = useCallback(() => {
       setSelectedTemplate('');
       setSelectedAgents([]);
+      setInputValue('');
       setSearchTerm('');
       setRemovedMembers({});
       setIsHostRemoved(false);
       setHostModelConfig(defaultModel.model && defaultModel.provider ? defaultModel : {});
-    };
+
+      // Clear any pending debounce timer
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    }, [defaultModel]);
 
     const handleHostModelChange = useCallback((config: { model?: string; provider?: string }) => {
       setHostModelConfig(config);
@@ -319,10 +332,30 @@ const ChatGroupWizard = memo<ChatGroupWizardProps>(
     }, []);
 
     const handleSearchChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
-      setSearchTerm(event.target.value);
+      const value = event.target.value;
+      setInputValue(value);
+
+      // Clear previous timer
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+
+      // Set new timer to update searchTerm after 300ms
+      debounceTimerRef.current = setTimeout(() => {
+        setSearchTerm(value);
+      }, 300);
     }, []);
 
     const agentCount = visibleAgentSessions.length;
+
+    // Cleanup debounce timer on unmount
+    useEffect(() => {
+      return () => {
+        if (debounceTimerRef.current) {
+          clearTimeout(debounceTimerRef.current);
+        }
+      };
+    }, []);
 
     useEffect(() => {
       if (!open) return;
@@ -336,10 +369,8 @@ const ChatGroupWizard = memo<ChatGroupWizardProps>(
       );
     }, [visibleAgentSessions]);
 
-    const handlePanelChange = useCallback((key: string | string[]) => {
-      if (!key) return;
-
-      const nextKey = Array.isArray(key) ? key[0] : key;
+    const handlePanelChange = useCallback((keys: string[]) => {
+      const nextKey = keys[0];
 
       if (nextKey === 'templates' || nextKey === 'agents') {
         setActivePanel(nextKey);
@@ -389,7 +420,7 @@ const ChatGroupWizard = memo<ChatGroupWizardProps>(
       return template.members
         .filter((member) => member !== null && member !== undefined)
         .map((member) => ({
-          avatar: member.avatar || DEFAULT_AVATAR,
+          avatar: member.avatar,
           backgroundColor: member.backgroundColor,
           description: member.systemRole,
           isRemoved: removedForTemplate.has(member.title),
@@ -405,46 +436,51 @@ const ChatGroupWizard = memo<ChatGroupWizardProps>(
     );
 
     const selectedAgentListItems = useMemo(() => {
-      return (
-        selectedAgents
-          .map((agentId) => {
-            const agent = agentSessions.find((session) => session.config?.id === agentId);
-            if (!agent) return null;
+      return selectedAgents
+        .map((agentId) => {
+          const agent = agentSessions.find((session) => session.config?.id === agentId);
+          if (!agent) return null;
 
-            const title = agent.meta?.title || t('defaultSession', { ns: 'common' });
-            const avatar = agent.meta?.avatar || DEFAULT_AVATAR;
-            const avatarBackground = agent.meta?.backgroundColor;
-            const description = agent.meta?.description || '';
+          const title = agent.meta?.title || t('defaultSession', { ns: 'common' });
+          const avatar = agent.meta?.avatar;
+          const avatarBackground = agent.meta?.backgroundColor;
+          const description = agent.meta?.description || '';
 
-            return {
-              actions: (
-                <Switch
-                  checked
-                  onChange={(checked) => {
-                    if (!checked) handleRemoveAgent(agentId);
-                  }}
-                  size="small"
-                />
-              ),
-              avatar: (
-                <Avatar avatar={avatar} background={avatarBackground} shape="circle" size={40} />
-              ),
-              description: description ? (
-                <Tooltip title={description}>
-                  <Text className={memberDescriptionClass} ellipsis={{ rows: 1 }}>
-                    {description}
-                  </Text>
-                </Tooltip>
-              ) : null,
-              key: agentId,
-              showAction: true,
-              title,
-            };
-          })
-          // eslint-disable-next-line unicorn/prefer-native-coercion-functions
-          .filter((item): item is NonNullable<typeof item> => Boolean(item))
-      );
-    }, [selectedAgents, agentSessions, t, handleRemoveAgent, memberDescriptionClass]);
+          return {
+            actions: (
+              <Switch
+                checked
+                size="small"
+                onChange={(checked) => {
+                  if (!checked) handleRemoveAgent(agentId);
+                }}
+              />
+            ),
+            avatar: (
+              <AgentAvatar
+                agentId={agentId}
+                avatar={avatar}
+                background={avatarBackground}
+                name={title}
+                shape={'circle'}
+                size={40}
+              />
+            ),
+            description: description ? (
+              <Tooltip title={description}>
+                <Text className={memberDescriptionClass} ellipsis={{ rows: 1 }}>
+                  {description}
+                </Text>
+              </Tooltip>
+            ) : null,
+            key: agentId,
+            label: title,
+            showAction: true,
+          };
+        })
+
+        .filter((item): item is NonNullable<typeof item> => Boolean(item));
+    }, [selectedAgents, agentSessions, t, handleRemoveAgent]);
 
     const normalizedHostModelConfig = useMemo(() => {
       const model = hostModelConfig.model ?? defaultModel.model;
@@ -458,8 +494,6 @@ const ChatGroupWizard = memo<ChatGroupWizardProps>(
     const handleTemplateConfirm = useCallback(async () => {
       if (!selectedTemplate) return;
 
-      const hostConfig = isHostRemoved ? undefined : normalizedHostModelConfig;
-
       try {
         // collect selected member titles (not removed)
         const template = groupTemplates.find((t) => t.id === selectedTemplate);
@@ -468,33 +502,19 @@ const ChatGroupWizard = memo<ChatGroupWizardProps>(
           .filter((m) => m !== null && m !== undefined && !removedForTemplate.has(m.title))
           .map((m) => m.title);
 
-        await onCreateFromTemplate(
-          selectedTemplate,
-          hostConfig,
-          !isHostRemoved,
-          selectedMemberTitles,
-        );
+        await onCreateFromTemplate(selectedTemplate, selectedMemberTitles);
         handleReset();
       } catch (error) {
         console.error('Failed to create group from template:', error);
       }
-    }, [
-      selectedTemplate,
-      onCreateFromTemplate,
-      normalizedHostModelConfig,
-      isHostRemoved,
-      groupTemplates,
-      removedMembers,
-    ]);
+    }, [selectedTemplate, onCreateFromTemplate, groupTemplates, removedMembers, handleReset]);
 
     const handleCustomConfirm = useCallback(async () => {
       if (selectedAgents.length === 0) return;
 
-      const hostConfig = isHostRemoved ? undefined : normalizedHostModelConfig;
-
       try {
         setIsCreatingCustom(true);
-        await onCreateCustom(selectedAgents, hostConfig, !isHostRemoved);
+        await onCreateCustom(selectedAgents);
         handleReset();
         onCancel();
       } catch (error) {
@@ -502,7 +522,7 @@ const ChatGroupWizard = memo<ChatGroupWizardProps>(
       } finally {
         setIsCreatingCustom(false);
       }
-    }, [selectedAgents, onCreateCustom, normalizedHostModelConfig, isHostRemoved, onCancel]);
+    }, [selectedAgents, onCreateCustom, onCancel, handleReset]);
 
     const handleConfirm = useCallback(async () => {
       if (selectedTemplate) {
@@ -525,118 +545,116 @@ const ChatGroupWizard = memo<ChatGroupWizardProps>(
     const confirmLoading = selectedTemplate ? isCreatingFromTemplate : isCreatingCustom;
 
     return (
-      <Modal
+      <ImperativeModal
+        open={open}
+        title={t('groupWizard.title')}
+        width={900}
         footer={
-          <Flexbox gap={8} horizontal justify="end">
+          <ModalFooter>
             <Button onClick={handleCancel}>{t('cancel', { ns: 'common' })}</Button>
             <Button
               disabled={confirmDisabled}
               loading={confirmLoading}
-              onClick={handleConfirm}
               type="primary"
+              onClick={handleConfirm}
             >
               {t('groupWizard.createGroup')}
             </Button>
-          </Flexbox>
+          </ModalFooter>
         }
         onCancel={handleCancel}
-        open={open}
-        title={t('groupWizard.title')}
-        width={900}
       >
-        <Flexbox className={styles.container} horizontal>
-          <Flexbox className={styles.leftColumn} flex={1} gap={12}>
+        <Flexbox horizontal className={stylex.props(styles.container).className}>
+          <Flexbox className={stylex.props(styles.leftColumn).className} flex={1} gap={12}>
             <SearchBar
               allowClear
-              onChange={handleSearchChange}
               placeholder={t('memberSelection.searchAgents')}
-              style={{ margin: `${theme.paddingSM}px ${theme.paddingSM}px 0 ${theme.paddingSM}px` }}
-              value={searchTerm}
+              style={{ margin: `${cssVar.paddingSM} ${cssVar.paddingSM} 0 ${cssVar.paddingSM}` }}
+              value={inputValue}
               variant="filled"
+              onChange={handleSearchChange}
             />
-            <Flexbox flex={1} style={{ overflowY: 'auto', padding: `0 ${theme.paddingSM}px` }}>
-              <Collapse
-                accordion
-                activeKey={activePanel}
-                collapsible
-                expandIconPosition="end"
+            <Flexbox flex={1} style={{ overflowY: 'auto', padding: `0 ${cssVar.paddingSM}` }}>
+              <Accordion
                 gap={12}
+                indicatorPlacement="end"
+                multiple={false}
+                value={[activePanel]}
+                variant="borderless"
                 items={[
                   {
                     children:
                       filteredTemplates.length === 0 ? (
                         <Empty
+                          descriptionProps={{ fontSize: 14 }}
+                          icon={Users}
+                          style={{ maxWidth: 400 }}
                           description={
                             searchTerm
                               ? t('groupWizard.noMatchingTemplates')
                               : t('groupWizard.noTemplates')
                           }
-                          image={Empty.PRESENTED_IMAGE_SIMPLE}
                         />
                       ) : (
                         <Flexbox gap={4}>
                           {filteredTemplates.map((template) => (
                             <TemplateItem
-                              cx={cx}
                               isSelected={selectedTemplate === template.id}
                               key={template.id}
-                              onToggle={handleTemplateToggle}
-                              styles={styles}
                               template={template}
+                              onToggle={handleTemplateToggle}
                             />
                           ))}
                         </Flexbox>
                       ),
                     key: 'templates',
-                    label: t('groupWizard.useTemplate'),
+                    title: t('groupWizard.useTemplate'),
                   },
                   {
                     children:
                       filteredAgents.length === 0 ? (
                         <Empty
+                          descriptionProps={{ fontSize: 14 }}
+                          icon={Users}
+                          style={{ maxWidth: 400 }}
                           description={
                             searchTerm
                               ? t('noMatchingAgents', { ns: 'chat' })
                               : t('noAvailableAgents', { ns: 'chat' })
                           }
-                          image={Empty.PRESENTED_IMAGE_SIMPLE}
                         />
                       ) : (
                         <Flexbox gap={4}>
                           {filteredAgents.map((agent) => (
                             <ExistingMemberItem
                               agent={agent}
-                              cx={cx}
                               isSelected={selectedAgents.includes(agent.config?.id || '')}
                               key={agent.id}
                               onToggle={handleAgentToggle}
-                              styles={styles}
                             />
                           ))}
                         </Flexbox>
                       ),
                     key: 'agents',
-                    label: t('groupWizard.existingMembers'),
+                    title: t('groupWizard.existingMembers'),
                   },
                 ]}
-                onChange={handlePanelChange}
-                size="small"
                 styles={{
-                  header: {
-                    color: theme.colorTextDescription,
-                    fontSize: theme.fontSize,
-                    padding: 0,
-                  },
+                  header: { color: cssVar.colorTextDescription, fontSize: cssVar.fontSize },
                 }}
-                variant="borderless"
+                onValueChange={handlePanelChange}
               />
             </Flexbox>
           </Flexbox>
 
-          <Flexbox className={styles.rightColumn} flex={1}>
+          <Flexbox className={stylex.props(styles.rightColumn).className} flex={1}>
             <Flexbox flex={1} gap={16} style={{ overflowY: 'auto' }}>
-              <Flexbox align="center" className={styles.hostCard} gap={12} horizontal>
-                <Avatar avatar={DEFAULT_SUPERVISOR_AVATAR} shape="circle" size={40} />
+              <Flexbox
+                horizontal
+                align="center"
+                className={stylex.props(styles.hostCard).className}
+                gap={12}
+              >
                 <Flexbox flex={1} gap={2}>
                   <Text
                     style={{ fontSize: 14, fontWeight: 500 }}
@@ -645,52 +663,55 @@ const ChatGroupWizard = memo<ChatGroupWizardProps>(
                     {t('groupWizard.host.title')}
                   </Text>
                   <Text
-                    style={{ color: '#999', fontSize: 12 }}
+                    style={{ color: cssVar.colorTextTertiary, fontSize: 12 }}
                     type={isHostRemoved ? 'secondary' : undefined}
                   >
                     {t('groupWizard.host.description')}
                   </Text>
                 </Flexbox>
-                <Flexbox align="center" gap={12} horizontal>
+                <Flexbox horizontal align="center" gap={12}>
                   <div
-                    className={cx(isHostRemoved && styles.modelSelectDisabled)}
-                    style={{ opacity: isHostRemoved ? 0.6 : 1 }}
+                    {...sx(isHostRemoved && styles.modelSelectDisabled, {
+                      opacity: isHostRemoved ? 0.6 : 1,
+                    })}
                   >
                     <ModelSelect
-                      onChange={handleHostModelChange}
                       requiredAbilities={['functionCall']}
                       value={normalizedHostModelConfig}
+                      onChange={handleHostModelChange}
                     />
                   </div>
                   <Tooltip title={t('groupWizard.host.tooltip')}>
                     <Switch
                       checked={!isHostRemoved}
-                      onChange={(checked) => handleHostToggle(checked)}
                       size="small"
+                      onChange={(checked) => handleHostToggle(checked)}
                     />
                   </Tooltip>
                 </Flexbox>
               </Flexbox>
 
-              <Flexbox style={{ padding: `0 ${theme.paddingSM}px` }}>
+              <Flexbox style={{ padding: `0 ${cssVar.paddingSM}` }}>
                 {selectedTemplate ? (
                   templateMemberItems.length > 0 ? (
                     <List
+                      styles={{ item: { paddingInlineEnd: 56 } }}
                       items={templateMemberItems.map((member) => ({
                         actions: (
                           <Switch
                             checked={!member.isRemoved}
+                            size="small"
                             onChange={(checked) =>
                               handleToggleMember(selectedTemplate, member.title, checked)
                             }
-                            size="small"
                           />
                         ),
                         avatar: (
-                          <Avatar
+                          <AgentAvatar
                             avatar={member.avatar}
                             background={member.backgroundColor}
-                            shape="circle"
+                            name={member.title}
+                            shape={'circle'}
                             size={40}
                           />
                         ),
@@ -706,33 +727,40 @@ const ChatGroupWizard = memo<ChatGroupWizardProps>(
                           </Tooltip>
                         ) : null,
                         key: member.key,
-                        showAction: true,
-                        title: (
+                        label: (
                           <Text type={member.isRemoved ? 'secondary' : undefined}>
                             {member.title}
                           </Text>
                         ),
+                        showAction: true,
                       }))}
                     />
                   ) : (
                     <Empty
                       description={t('groupWizard.noTemplateMembers')}
-                      image={Empty.PRESENTED_IMAGE_SIMPLE}
+                      descriptionProps={{ fontSize: 14 }}
+                      icon={Users}
+                      style={{ maxWidth: 400 }}
                     />
                   )
                 ) : selectedAgentListItems.length > 0 ? (
-                  <List items={selectedAgentListItems} />
+                  <List
+                    items={selectedAgentListItems}
+                    styles={{ item: { paddingInlineEnd: 56 } }}
+                  />
                 ) : (
                   <Empty
                     description={t('memberSelection.noSelectedAgents')}
-                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    descriptionProps={{ fontSize: 14 }}
+                    icon={Users}
+                    style={{ maxWidth: 400 }}
                   />
                 )}
               </Flexbox>
             </Flexbox>
           </Flexbox>
         </Flexbox>
-      </Modal>
+      </ImperativeModal>
     );
   },
 );

@@ -1,11 +1,20 @@
-import { AsyncTaskError, AsyncTaskStatus } from '../asyncTask';
+import type { AsyncTaskError, AsyncTaskStatus } from '../asyncTask';
+
+export interface GenerationTopicCreator {
+  avatar?: string | null;
+  fullName?: string | null;
+  id: string;
+  username?: string | null;
+}
 
 export interface ImageGenerationTopic {
   coverUrl?: string | null;
   createdAt: Date;
+  creator?: GenerationTopicCreator | null;
   id: string;
   title?: string | null;
   updatedAt: Date;
+  visibility?: 'private' | 'public' | null;
 }
 
 export interface BaseGenerationAsset {
@@ -14,36 +23,81 @@ export interface BaseGenerationAsset {
 
 export interface ImageGenerationAsset extends BaseGenerationAsset {
   /**
-   * 图片/视频的高度
+   * Height of the image/video
    */
   height?: number;
   /**
-   * api provider 家的 cdn url，一般很快就会失效
+   * CDN URL from the API provider, typically expires quickly
    */
   originalUrl?: string;
   /**
-   * 缩略图，图片那就是尺寸裁剪过的，视频那就是封面的缩略图
+   * Thumbnail URL - for images it's a resized version, for videos it's a thumbnail of the cover
    */
   thumbnailUrl?: string;
   /**
-   * 存到自己 oss 的 url, 只存了 key， 完整的 url 需要使用 FileService.getFullFileUrl 获取
+   * URL stored in own OSS, only the key is stored. The full URL needs to be obtained using FileService.getFullFileUrl
    */
   url?: string;
   /**
-   * 图片/视频的宽度
+   * Width of the image/video
    */
   width?: number;
 }
 
-export type GenerationAsset = ImageGenerationAsset;
+export interface VideoGenerationAsset extends BaseGenerationAsset {
+  coverUrl?: string;
+  duration?: number;
+  height?: number;
+  /** Provider interaction id used to continue stateful video editing. */
+  interactionId?: string;
+  originalUrl?: string;
+  /** Previous generated version used as the editing source. */
+  previousGenerationId?: string;
+  thumbnailUrl?: string;
+  url?: string;
+  width?: number;
+}
+
+/**
+ * A generated song. `url` / `coverUrl` are storage keys in our own file storage (resolve with
+ * `FileService.getFullFileUrl`); `originalUrl` is the provider's temporary URL.
+ */
+export interface MusicGenerationAsset extends BaseGenerationAsset {
+  coverUrl?: string;
+  /** Track length in seconds */
+  duration?: number;
+  /** Lyrics the provider used, when it returned them */
+  lyrics?: string;
+  mimeType?: string;
+  originalUrl?: string;
+  /** Provider-side track id */
+  providerTrackId?: string;
+  /** Style tags the provider applied */
+  tags?: string;
+  title?: string;
+  type: 'audio';
+  url?: string;
+}
+
+/**
+ * Assets of image and video generations. Music assets are stored in the same column but kept
+ * out of this union, which image/video UI code reads `width` / `thumbnailUrl` from; narrow on
+ * `type === 'audio'` to read a {@link MusicGenerationAsset}.
+ */
+export type GenerationAsset = ImageGenerationAsset | VideoGenerationAsset;
 
 export interface GenerationConfig {
   aspectRatio?: string;
   cfg?: number;
+  endImageUrl?: string | null;
   height?: number;
   imageUrl?: string | null;
   imageUrls?: string[];
+  previousGenerationId?: string;
   prompt: string;
+  /** Music cover reference track: a storage key in the DB, a full URL once read */
+  referenceAudioUrl?: string | null;
+  resolution?: string;
   size?: string;
   steps?: number;
   width?: number;
@@ -62,15 +116,26 @@ export interface Generation {
   asset?: GenerationAsset | null;
   asyncTaskId: string | null;
   createdAt: Date;
+  /**
+   * Library file the generated asset was saved as, once the task succeeded.
+   */
+  fileId?: string | null;
   id: string;
+  /**
+   * Source generation this one edits, read from the async task metadata so the
+   * version link is available while the edit is still generating.
+   */
+  previousGenerationId?: string;
   seed?: number | null;
 
   task: GenerationAsyncTask;
 }
 
 export interface GenerationBatch {
+  avgLatencyMs?: number | null;
   config?: GenerationConfig;
   createdAt: Date;
+  creator?: GenerationTopicCreator | null;
   generations: Generation[];
   height?: number | null;
   id: string;

@@ -4,13 +4,23 @@ import type { App } from '@/core/App';
 
 import ShortcutController from '../ShortcutCtr';
 
-// 模拟 App 及其依赖项
+const { ipcMainHandleMock } = vi.hoisted(() => ({
+  ipcMainHandleMock: vi.fn(),
+}));
+
+vi.mock('electron', () => ({
+  ipcMain: {
+    handle: ipcMainHandleMock,
+  },
+}));
+
+// Mock App and its dependencies
 const mockGetShortcutsConfig = vi.fn().mockReturnValue({
   toggleMainWindow: 'CommandOrControl+Shift+L',
   openSettings: 'CommandOrControl+,',
 });
-const mockUpdateShortcutConfig = vi.fn().mockImplementation((id, accelerator) => {
-  // 简单模拟更新成功
+const mockUpdateShortcutConfig = vi.fn().mockImplementation((_id, _accelerator) => {
+  // Simply mock a successful update
   return true;
 });
 
@@ -26,6 +36,7 @@ describe('ShortcutController', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    ipcMainHandleMock.mockClear();
     shortcutController = new ShortcutController(mockApp);
   });
 
@@ -53,7 +64,7 @@ describe('ShortcutController', () => {
     });
 
     it('should return the result from shortcutManager.updateShortcutConfig', () => {
-      // 模拟更新失败的情况
+      // Mock an update failure scenario
       mockUpdateShortcutConfig.mockReturnValueOnce(false);
 
       const result = shortcutController.updateShortcutConfig({

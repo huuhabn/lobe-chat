@@ -1,13 +1,17 @@
-import { ModelProvider } from 'model-bank';
+import { ModelProvider, zhipu as zhipuChatModels } from 'model-bank';
 
 import {
-  type OpenAICompatibleFactoryOptions,
   createOpenAICompatibleRuntime,
-} from '../../core/openaiCompatibleFactory';
+  type OpenAICompatibleFactoryOptions,
+} from '../../core/openaiCompatible';
 import { resolveParameters } from '../../core/parameterResolver';
-import { OpenAIStream } from '../../core/streams/openai';
+import { OpenAIStream } from '../../core/protocols/openaiChatCompletions/stream';
 import { convertIterableToStream } from '../../core/streams/protocol';
+import { getModelMaxOutputs } from '../../utils/getModelMaxOutputs';
 import { MODEL_LIST_CONFIGS, processModelList } from '../../utils/modelParse';
+import { createZhipuImage } from './createImage';
+import { createZhipuVideo } from './createVideo';
+import { isAlwaysOnThinkingGLMModel, isToolStreamSupportedGLMModel } from './modelId';
 
 export interface ZhipuModelCard {
   description: string;
@@ -15,12 +19,64 @@ export interface ZhipuModelCard {
   modelName: string;
 }
 
+interface ZhipuRuntimeOptions {
+  [key: string]: unknown;
+  disableToolStream?: boolean;
+}
+
+const isFireworksRuntime = (options: ZhipuRuntimeOptions) =>
+  typeof options.baseURL === 'string' && options.baseURL.includes('fireworks.ai');
+
 export const params = {
   baseURL: 'https://open.bigmodel.cn/api/paas/v4',
   chatCompletion: {
-    handlePayload: (payload) => {
-      const { enabledSearch, max_tokens, model, temperature, thinking, tools, top_p, ...rest } =
-        payload;
+    handlePayload: (payload, options: ZhipuRuntimeOptions = {}) => {
+      const {
+        enabledSearch,
+        max_tokens,
+        model,
+        preserveThinking,
+        reasoning_effort,
+        stream,
+        temperature,
+        thinking,
+        tools,
+        top_p,
+        ...rest
+      } = payload;
+
+      const messages = (rest.messages || []).map((message: any) => {
+        const { reasoning, ...messageRest } = message;
+
+        const reasoningContent =
+          typeof messageRest.reasoning_content === 'string'
+            ? messageRest.reasoning_content
+            : typeof reasoning?.content === 'string'
+              ? reasoning.content
+              : undefined;
+
+        if (reasoningContent !== undefined) {
+          return {
+            ...messageRest,
+            reasoning_content: reasoningContent,
+          };
+        }
+
+        return messageRest;
+      });
+
+      const shouldSetClearThinking = typeof preserveThinking === 'boolean';
+      const thinkingPayload = thinking ? { type: thinking.type } : undefined;
+      const resolvedThinking = shouldSetClearThinking
+        ? {
+            ...thinkingPayload,
+            clear_thinking: !preserveThinking,
+          }
+        : thinkingPayload;
+      // GLM-5.3+ rejects thinking.type=disabled; keep effort-only control.
+      const enforcedThinking = isAlwaysOnThinkingGLMModel(model)
+        ? { ...resolvedThinking, type: 'enabled' as const }
+        : resolvedThinking;
 
       const zhipuTools = enabledSearch
         ? [
@@ -29,7 +85,7 @@ export const params = {
               type: 'web_search',
               web_search: {
                 enable: true,
-                result_sequence: 'before', // 将搜索结果返回顺序更改为 before 适配最小化 OpenAIStream 改动
+                result_sequence: 'before', // Change search result return sequence to 'before' to minimize OpenAIStream modifications
                 search_engine: process.env.ZHIPU_SEARCH_ENGINE || 'search_std', // search_std, search_pro
                 search_result: true,
               },
@@ -39,7 +95,14 @@ export const params = {
 
       // Resolve parameters based on model-specific constraints
       const resolvedParams = resolveParameters(
-        { max_tokens, temperature, top_p },
+        {
+          max_tokens:
+            max_tokens !== undefined
+              ? max_tokens
+              : getModelMaxOutputs(payload.model, zhipuChatModels),
+          temperature,
+          top_p,
+        },
         {
           // max_tokens constraints
           maxTokensRange: model.includes('glm-4v')
@@ -56,51 +119,76 @@ export const params = {
         },
       );
 
+      // Example: Fireworks serves GLM-5.2 but rejects the Z.ai-only `tool_stream` field.
+      const isFireworks = isFireworksRuntime(options);
+      const shouldEnableToolStream =
+        !isFireworks &&
+        !options.disableToolStream &&
+        stream &&
+        isToolStreamSupportedGLMModel(model);
+      const shouldDropReasoningEffort = Boolean(
+        isFireworks && reasoning_effort && enforcedThinking?.type === 'disabled',
+      );
+      // Example rejected by Fireworks GLM-5.2:
+      // { thinking: { type: 'enabled' }, reasoning_effort: 'max' }.
+      const shouldDropThinking = Boolean(
+        isFireworks && reasoning_effort && enforcedThinking?.type !== 'disabled',
+      );
+
       return {
         ...rest,
         ...resolvedParams,
+        messages,
         model,
-        stream: true,
-        thinking: model.includes('-4.5') ? { type: thinking?.type } : undefined,
+        ...(reasoning_effort && !shouldDropReasoningEffort ? { reasoning_effort } : {}),
+        ...(isFireworks && preserveThinking ? { reasoning_history: 'preserved' } : {}),
+        stream,
+        thinking: shouldDropThinking ? undefined : enforcedThinking,
+        tool_stream: shouldEnableToolStream ? true : undefined,
         tools: zhipuTools,
       } as any;
     },
-    handleStream: (stream, { callbacks, inputStartAt }) => {
+    handleStream: (stream, { callbacks, inputStartAt, payload }) => {
       const readableStream =
         stream instanceof ReadableStream ? stream : convertIterableToStream(stream);
 
-      // GLM-4.5 系列模型在 tool_calls 中返回的 index 为 -1，需要在进入 OpenAIStream 之前修正
-      // 因为 OpenAIStream 内部会过滤掉 index < 0 的 tool_calls (openai.ts:58-60)
+      // GLM-4.5 series models return index -1 in tool_calls, needs to be fixed before entering OpenAIStream
+      // because OpenAIStream internally filters out tool_calls with index < 0 (openai.ts:58-60)
       const preprocessedStream = readableStream.pipeThrough(
         new TransformStream({
           transform(chunk, controller) {
-            // 处理原始的 OpenAI ChatCompletionChunk 格式
+            // Handle raw OpenAI ChatCompletionChunk format
             if (chunk.choices && chunk.choices[0]) {
               const choice = chunk.choices[0];
               if (choice.delta?.tool_calls && Array.isArray(choice.delta.tool_calls)) {
-                // 修正负数 index，将 -1 转换为基于数组位置的正数 index
-                const fixedToolCalls = choice.delta.tool_calls.map(
-                  (toolCall: any, globalIndex: number) => ({
+                // Fix negative index, convert -1 to positive index based on array position
+                // With tool_stream enabled, some proxies (e.g., aihubmix) send
+                // incomplete tool_call chunks without id/function.name before the
+                // real chunk arrives. Filter them out to prevent ZodError in parseToolCalls.
+                const fixedToolCalls = choice.delta.tool_calls
+                  .filter(
+                    (toolCall: any) =>
+                      // Keep chunks that have id/name (first real chunk) or
+                      // non-empty arguments (subsequent incremental chunks)
+                      toolCall.id || toolCall.function?.name || toolCall.function?.arguments,
+                  )
+                  .map((toolCall: any, globalIndex: number) => ({
                     ...toolCall,
+                    // Fix negative index (-1 → array position)
                     index: toolCall.index < 0 ? globalIndex : toolCall.index,
-                  }),
-                );
+                  }));
 
-                // 创建修正后的 chunk
-                const fixedChunk = {
-                  ...chunk,
-                  choices: [
-                    {
-                      ...choice,
-                      delta: {
-                        ...choice.delta,
-                        tool_calls: fixedToolCalls,
-                      },
-                    },
-                  ],
-                };
-
-                controller.enqueue(fixedChunk);
+                if (fixedToolCalls.length === 0) {
+                  // All tool_calls were incomplete placeholders, skip this chunk
+                  controller.enqueue({ ...chunk, choices: [{ ...choice, delta: {} }] });
+                } else {
+                  controller.enqueue({
+                    ...chunk,
+                    choices: [
+                      { ...choice, delta: { ...choice.delta, tool_calls: fixedToolCalls } },
+                    ],
+                  });
+                }
               } else {
                 controller.enqueue(chunk);
               }
@@ -114,11 +202,18 @@ export const params = {
       return OpenAIStream(preprocessedStream, {
         callbacks,
         inputStartAt,
-        payload: {
-          provider: 'zhipu',
-        },
+        payload,
       });
     },
+  },
+  createImage: createZhipuImage,
+  createVideo: createZhipuVideo,
+  handlePollVideoStatus: async (inferenceId, options) => {
+    const { pollZhipuVideoStatus } = await import('./createVideo');
+    return pollZhipuVideoStatus(inferenceId, {
+      apiKey: options.apiKey,
+      baseURL: options.baseURL || '',
+    });
   },
   debug: {
     chatCompletion: () => process.env.DEBUG_ZHIPU_CHAT_COMPLETION === '1',
@@ -146,6 +241,6 @@ export const params = {
     return processModelList(standardModelList, MODEL_LIST_CONFIGS.zhipu, 'zhipu');
   },
   provider: ModelProvider.ZhiPu,
-} satisfies OpenAICompatibleFactoryOptions;
+} satisfies OpenAICompatibleFactoryOptions<ZhipuRuntimeOptions>;
 
-export const LobeZhipuAI = createOpenAICompatibleRuntime(params);
+export const LobeZhipuAI = createOpenAICompatibleRuntime<ZhipuRuntimeOptions>(params);

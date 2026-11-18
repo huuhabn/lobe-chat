@@ -1,7 +1,8 @@
-import { merge as _merge, isEmpty, mergeWith } from 'lodash-es';
+import type { merge as _merge } from 'es-toolkit/compat';
+import { isEmpty, mergeWith } from 'es-toolkit/compat';
 
 /**
- * 用于合并对象，如果是数组则直接替换
+ * Merge objects, directly replace if it's an array
  * @param target
  * @param source
  */
@@ -24,7 +25,7 @@ export const mergeArrayById = <T extends MergeableItem>(defaultItems: T[], userI
   // Create a map of default items for faster lookup
   const defaultItemsMap = new Map(defaultItems.map((item) => [item.id, item]));
 
-  // 使用 Map 存储合并结果，这样重复 ID 的后项会自然覆盖前项
+  // Use Map to store merged results, so duplicate IDs naturally overwrite previous entries
   const mergedItemsMap = new Map<string, T>();
 
   // Process user items with default metadata
@@ -51,7 +52,7 @@ export const mergeArrayById = <T extends MergeableItem>(defaultItems: T[], userI
     mergedItemsMap.set(userItem.id, mergedItem);
   });
 
-  // 添加只在默认配置中存在的项
+  // Add items that only exist in default configuration
   defaultItems.forEach((item) => {
     if (!mergedItemsMap.has(item.id)) {
       mergedItemsMap.set(item.id, item);

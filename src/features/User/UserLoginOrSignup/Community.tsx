@@ -1,23 +1,15 @@
-import { useAnalytics } from '@lobehub/analytics/react';
-import { Button } from '@lobehub/ui';
+import { Button, Flexbox } from '@lobehub/ui';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Flexbox } from 'react-layout-kit';
 
 import UserInfo from '../UserInfo';
+import { trackLoginOrSignupClicked } from './trackLoginOrSignupClicked';
 
 const UserLoginOrSignup = memo<{ onClick: () => void }>(({ onClick }) => {
   const { t } = useTranslation('auth');
-  const { analytics } = useAnalytics();
 
   const handleClick = () => {
-    analytics?.track({
-      name: 'login_or_signup_clicked',
-      properties: {
-        spm: 'homepage.login_or_signup.click',
-      },
-    });
-
+    void trackLoginOrSignupClicked({ spm: 'homepage.login_or_signup.click' });
     onClick();
   };
 
@@ -25,7 +17,7 @@ const UserLoginOrSignup = memo<{ onClick: () => void }>(({ onClick }) => {
     <>
       <UserInfo />
       <Flexbox paddingBlock={12} paddingInline={16} width={'100%'}>
-        <Button block onClick={handleClick} type={'primary'}>
+        <Button block type={'primary'} onClick={handleClick}>
           {t('loginOrSignup')}
         </Button>
       </Flexbox>

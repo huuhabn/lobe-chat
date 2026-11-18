@@ -1,9 +1,7 @@
 import { ModelProvider } from 'model-bank';
 
-import {
-  OpenAICompatibleFactoryOptions,
-  createOpenAICompatibleRuntime,
-} from '../../core/openaiCompatibleFactory';
+import type { OpenAICompatibleFactoryOptions } from '../../core/openaiCompatible';
+import { createOpenAICompatibleRuntime } from '../../core/openaiCompatible';
 import { processMultiProviderModelList } from '../../utils/modelParse';
 
 export interface NebiusModelCard {

@@ -1,4 +1,5 @@
-import { ChatMessage } from '@/types/index';
+import type { UIChatMessage } from '@lobechat/types';
+import { agentDisplayName } from '@lobechat/types';
 
 export interface GroupMemberInfo {
   id: string;
@@ -13,7 +14,10 @@ export interface SupervisorTodoItem {
 
 const buildGroupMembersTag = (members: GroupMemberInfo[]): string => {
   if (!members || members.length === 0) return '';
-  return `<group_members>\n${JSON.stringify(members, null, 2)}\n</group_members>`;
+  const memberList = members
+    .map((member) => `  <member id="${member.id}" title="${member.title}" />`)
+    .join('\n');
+  return `<group_members>\n${memberList}\n</group_members>`;
 };
 
 export const buildGroupChatSystemPrompt = ({
@@ -27,7 +31,7 @@ export const buildGroupChatSystemPrompt = ({
   baseSystemRole?: string;
   groupMembers: GroupMemberInfo[];
   instruction?: string;
-  messages: ChatMessage[];
+  messages: UIChatMessage[];
   targetId?: string;
 }): string => {
   const membersTag = buildGroupMembersTag(groupMembers);
@@ -63,7 +67,7 @@ export const buildGroupChatSystemPrompt = ({
 
 export interface SupervisorPromptParams {
   allowDM?: boolean;
-  availableAgents: Array<{ id: string; title?: string | null }>;
+  availableAgents: Array<{ id: string; name?: string | null; title?: string | null }>;
   conversationHistory: string;
   scene?: 'casual' | 'productive';
   systemPrompt?: string;
@@ -96,7 +100,7 @@ export const buildSupervisorPrompt = ({
     // Then include all agents
     ...availableAgents.map((agent) => ({
       id: agent.id,
-      name: agent.title || agent.id,
+      name: agentDisplayName(agent, agent.id),
       role: 'assistant',
     })),
   ];
@@ -138,7 +142,7 @@ RULES:
 WHEN ASKING AGENTS TO SPEAK:
 
 - Only reference agents from the member list. Never invent new IDs.
-- Do not excessivly gathering information from user, you should only ask for information when it's necessary. 
+- Do not excessivly gathering information from user, you should only ask for information when it's necessary.
 - If need many information from user, make single agent to ask for all.
 ${dmRules}
 

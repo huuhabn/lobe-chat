@@ -1,22 +1,24 @@
-import type { ChatModelCard } from '@lobechat/types';
 import { ModelProvider } from 'model-bank';
 
-import {
-  type OpenAICompatibleFactoryOptions,
-  createOpenAICompatibleRuntime,
-} from '../../core/openaiCompatibleFactory';
+import type { OpenAICompatibleFactoryOptions } from '../../core/openaiCompatible';
+import { createOpenAICompatibleRuntime } from '../../core/openaiCompatible';
+import { MODEL_LIST_CONFIGS, processModelList } from '../../utils/modelParse';
 
 export interface InternLMModelCard {
   id: string;
 }
 
 export const params = {
-  baseURL: 'https://internlm-chat.intern-ai.org.cn/puyu/api/v1',
+  baseURL: 'https://chat.intern-ai.org.cn/api/v1',
   chatCompletion: {
     handlePayload: (payload) => {
+      const { thinking, ...rest } = payload as any;
+
       return {
-        ...payload,
-        stream: !payload.tools,
+        ...rest,
+        ...(thinking?.type !== undefined && {
+          thinking_mode: thinking.type === 'enabled',
+        }),
       } as any;
     },
   },
@@ -24,38 +26,10 @@ export const params = {
     chatCompletion: () => process.env.DEBUG_INTERNLM_CHAT_COMPLETION === '1',
   },
   models: async ({ client }) => {
-    const { LOBE_DEFAULT_MODEL_LIST } = await import('model-bank');
-
-    const functionCallKeywords = ['internlm'];
-
-    const visionKeywords = ['internvl'];
-
     const modelsPage = (await client.models.list()) as any;
     const modelList: InternLMModelCard[] = modelsPage.data;
 
-    return modelList
-      .filter((model) => model && model.id)
-      .map((model) => {
-        const knownModel = LOBE_DEFAULT_MODEL_LIST.find(
-          (m) => model.id.toLowerCase() === m.id.toLowerCase(),
-        );
-
-        return {
-          contextWindowTokens: knownModel?.contextWindowTokens ?? undefined,
-          displayName: knownModel?.displayName ?? undefined,
-          enabled: knownModel?.enabled || false,
-          functionCall:
-            functionCallKeywords.some((keyword) => model.id.toLowerCase().includes(keyword)) ||
-            knownModel?.abilities?.functionCall ||
-            false,
-          id: model.id,
-          reasoning: knownModel?.abilities?.reasoning || false,
-          vision:
-            visionKeywords.some((keyword) => model.id.toLowerCase().includes(keyword)) ||
-            knownModel?.abilities?.vision ||
-            false,
-        };
-      }) as ChatModelCard[];
+    return processModelList(modelList, MODEL_LIST_CONFIGS.internlm, 'internlm');
   },
   provider: ModelProvider.InternLM,
 } satisfies OpenAICompatibleFactoryOptions;

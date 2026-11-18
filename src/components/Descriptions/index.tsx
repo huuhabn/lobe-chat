@@ -1,109 +1,162 @@
-import { Grid, type GridProps, Icon, IconProps, Text } from '@lobehub/ui';
-import { createStyles } from 'antd-style';
-import { CSSProperties, ReactNode, memo } from 'react';
-import { Flexbox } from 'react-layout-kit';
+import { type GridProps, type IconProps } from '@lobehub/ui';
+import { cx, Flexbox, Grid, Icon, Text } from '@lobehub/ui';
+import { cssVar } from '@lobehub/ui/stylex/cssVar.stylex';
+import { media } from '@lobehub/ui/stylex/media.stylex';
+import * as stylex from '@stylexjs/stylex';
+import { type CSSProperties, type ReactNode } from 'react';
+import { memo } from 'react';
+
+import { sx } from '@/styles/sx';
 
 import CopyableLabel from '../CopyableLabel';
 
-const useStyles = createStyles(({ responsive, css, token }) => {
-  return {
-    bordered: css`
-      overflow: hidden;
-      border: 1px solid ${token.colorBorderSecondary};
-      border-radius: ${token.borderRadiusLG}px;
-      ${responsive.mobile} {
-        background: ${token.colorBgContainer};
-      }
-    `,
-    cell: css`
-      overflow: hidden;
-      box-shadow: 0 0 0 0.5px ${token.colorBorderSecondary};
-    `,
-    label: css`
-      overflow: hidden;
-      border-inline-end: 1px solid ${token.colorBorderSecondary};
-      background: ${token.colorFillQuaternary};
-    `,
-  };
+const styles = stylex.create({
+  bordered: {
+    overflow: 'hidden',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: cssVar.colorBorderSecondary,
+    borderRadius: cssVar.borderRadiusLG,
+    backgroundColor: { default: null, [media.sm]: cssVar.colorBgContainer },
+    backgroundImage: { default: null, [media.sm]: 'none' },
+  },
+  cell: {
+    overflow: 'hidden',
+    boxShadow: `0 0 0 0.5px ${cssVar.colorBorderSecondary}`,
+  },
+  label: {
+    overflow: 'hidden',
+    borderInlineEndWidth: '1px',
+    borderInlineEndStyle: 'solid',
+    borderInlineEndColor: cssVar.colorBorderSecondary,
+    backgroundColor: cssVar.colorFillQuaternary,
+    backgroundImage: 'none',
+  },
 });
 
 export interface DescriptionItem {
+  className?: string;
+  classNames?: {
+    label?: string;
+    value?: string;
+  };
   copyable?: boolean;
   icon?: IconProps['icon'];
   key: string;
   label: ReactNode;
   style?: CSSProperties;
+  styles?: {
+    label?: CSSProperties;
+    value?: CSSProperties;
+  };
   value: ReactNode;
 }
 
-interface DescriptionsProps extends Omit<GridProps, 'children'> {
+interface DescriptionsProps extends Omit<GridProps, 'children' | 'wrap'> {
   bordered?: boolean;
+  classNames?: {
+    item?: string;
+    label?: string;
+    value?: string;
+  };
   items: DescriptionItem[];
   labelWidth?: number | string;
+  styles?: {
+    item?: CSSProperties;
+    label?: CSSProperties;
+    value?: CSSProperties;
+  };
+  wrap?: boolean;
 }
 
 const Descriptions = memo<DescriptionsProps>(
-  ({ labelWidth = 150, title, bordered, className, items, ...rest }) => {
-    const { cx, styles, theme } = useStyles();
-
+  ({
+    labelWidth = 150,
+    title,
+    bordered,
+    className,
+    items,
+    classNames,
+    styles: customStyles,
+    wrap,
+    ...rest
+  }) => {
     return (
       <>
         {title && <h3 style={{ marginTop: 12 }}>{title}</h3>}
-        <Grid
-          className={cx(bordered && styles.bordered, className)}
-          gap={0}
-          maxItemWidth={450}
-          {...rest}
-        >
+        <Grid gap={0} maxItemWidth={450} {...sx(bordered && styles.bordered, className)} {...rest}>
           {items.map((item) => (
             <Flexbox
-              align={'center'}
-              className={cx(bordered && styles.cell)}
-              flex={1}
               horizontal
+              align={wrap ? 'flex-start' : 'center'}
+              flex={1}
               key={item.key}
+              {...sx(bordered && styles.cell, cx(item.className, classNames?.item))}
               style={{
-                overflow: 'hidden',
+                overflow: wrap ? undefined : 'hidden',
                 position: 'relative',
+                ...customStyles?.item,
+                ...item.style,
               }}
             >
               <Flexbox
+                horizontal
                 align={'center'}
-                className={cx(bordered && styles.label)}
                 flex={'none'}
                 gap={6}
-                horizontal
+                {...sx(bordered && styles.label)}
                 paddingBlock={bordered ? 12 : 4}
                 paddingInline={bordered ? 16 : 0}
                 style={{ height: '100%', position: 'relative' }}
                 width={labelWidth}
               >
-                {item.icon && <Icon color={theme.colorTextSecondary} icon={item.icon} />}
+                {item.icon && <Icon color={cssVar.colorTextSecondary} icon={item.icon} />}
                 <Text
                   ellipsis
+                  className={cx(classNames?.label, item.classNames?.label)}
                   style={{
-                    color: theme.colorTextSecondary,
+                    color: cssVar.colorTextSecondary,
+                    ...customStyles?.label,
+                    ...item.styles?.label,
                   }}
                 >
                   {item.label}
                 </Text>
               </Flexbox>
               <Flexbox
-                align={'center'}
-                flex={1}
                 horizontal
+                align={wrap ? 'flex-start' : 'center'}
+                flex={1}
                 justify={'flex-start'}
                 paddingBlock={bordered ? 12 : 4}
                 paddingInline={16}
-                style={{ height: '100%', overflow: 'hidden', position: 'relative' }}
+                style={{
+                  height: '100%',
+                  overflow: wrap ? undefined : 'hidden',
+                  position: 'relative',
+                }}
               >
                 {item.copyable ? (
                   <CopyableLabel
-                    style={item.style}
+                    className={cx(classNames?.value, item.classNames?.value)}
+                    style={{ ...customStyles?.value, ...item.styles?.value }}
                     value={item.value ? String(item.value) : '--'}
+                    wrap={wrap}
                   />
                 ) : (
-                  <Text ellipsis style={{ ...item.style }}>
+                  <Text
+                    className={cx(classNames?.value, item.classNames?.value)}
+                    ellipsis={!wrap}
+                    style={{
+                      ...(wrap && {
+                        overflowWrap: 'anywhere',
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-word',
+                      }),
+                      ...customStyles?.value,
+                      ...item.styles?.value,
+                    }}
+                  >
                     {item.value}
                   </Text>
                 )}

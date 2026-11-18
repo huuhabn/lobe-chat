@@ -1,27 +1,19 @@
-import { Select, type SelectProps } from '@lobehub/ui';
-import { createStyles } from 'antd-style';
+import { Select, type SelectProps, TooltipGroup } from '@lobehub/ui';
+import { type ReactNode } from 'react';
 import { memo, useMemo } from 'react';
 
 import { ModelItemRender, ProviderItemRender } from '@/components/ModelSelect';
 import { useEnabledChatModels } from '@/hooks/useEnabledChatModels';
-import { WorkingModel } from '@/types/agent';
-import { EnabledProviderWithModels } from '@/types/aiProvider';
-
-const useStyles = createStyles(({ css, prefixCls }) => ({
-  select: css`
-    &.${prefixCls}-select-dropdown .${prefixCls}-select-item-option-grouped {
-      padding-inline-start: 12px;
-    }
-  `,
-}));
+import { type WorkingModel } from '@/types/agent';
+import { type EnabledProviderWithModels } from '@/types/aiProvider';
 
 interface ModelOption {
-  label: any;
+  label: ReactNode;
   provider: string;
   value: string;
 }
 
-interface ModelSelectProps extends SelectProps {
+interface ModelSelectProps extends Omit<SelectProps, 'onChange' | 'value'> {
   onChange?: (props: WorkingModel) => void;
   showAbility?: boolean;
   value?: WorkingModel;
@@ -29,8 +21,6 @@ interface ModelSelectProps extends SelectProps {
 
 const ModelSelect = memo<ModelSelectProps>(({ value, onChange, ...rest }) => {
   const enabledList = useEnabledChatModels();
-
-  const { styles } = useStyles();
 
   const options = useMemo<SelectProps['options']>(() => {
     const getChatModels = (provider: EnabledProviderWithModels) =>
@@ -68,18 +58,20 @@ const ModelSelect = memo<ModelSelectProps>(({ value, onChange, ...rest }) => {
   }, [enabledList]);
 
   return (
-    <Select
-      onChange={(value, option) => {
-        const model = value.split('/').slice(1).join('/');
-        onChange?.({ model, provider: (option as unknown as ModelOption).provider });
-      }}
-      options={options}
-      popupClassName={styles.select}
-      popupMatchSelectWidth={false}
-      value={`${value?.provider}/${value?.model}`}
-      variant={'filled'}
-      {...rest}
-    />
+    <TooltipGroup>
+      <Select
+        options={options}
+        popupMatchSelectWidth={false}
+        value={`${value?.provider}/${value?.model}`}
+        variant={'filled'}
+        onChange={(value, option) => {
+          if (!value) return;
+          const model = (value as string).split('/').slice(1).join('/');
+          onChange?.({ model, provider: (option as unknown as ModelOption).provider });
+        }}
+        {...rest}
+      />
+    </TooltipGroup>
   );
 });
 

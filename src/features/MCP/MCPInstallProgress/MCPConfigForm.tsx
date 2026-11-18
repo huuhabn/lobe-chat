@@ -1,10 +1,8 @@
-import { Form, Markdown } from '@lobehub/ui';
-import { Form as AForm, Button } from 'antd';
-import { createStyles } from 'antd-style';
-import { motion } from 'framer-motion';
+import { Button, createStaticStyles, Flexbox, Markdown } from '@lobehub/ui';
+import { Form, useForm } from '@lobehub/ui/form';
+import * as m from 'motion/react-m';
 import { memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Flexbox } from 'react-layout-kit';
 
 import ItemRender from '@/components/JSONSchemaConfig/ItemRender';
 import { transformPluginSettings } from '@/features/PluginSettings';
@@ -17,35 +15,33 @@ interface MCPConfigFormProps {
   onSubmit?: (config: Record<string, any>) => Promise<void>;
 }
 
-const useStyles = createStyles(({ css, token }) => ({
+const styles = createStaticStyles(({ css, cssVar }) => ({
   container: css`
-    margin-block-start: ${token.marginXS}px;
-    padding: ${token.padding}px;
-    border: 1px solid ${token.colorBorder};
-    border-radius: ${token.borderRadius}px;
+    margin-block-start: ${cssVar.marginXS};
+    padding: ${cssVar.padding};
+    border: 1px solid ${cssVar.colorBorder};
+    border-radius: ${cssVar.borderRadius};
 
-    background-color: ${token.colorBgContainer};
+    background-color: ${cssVar.colorBgContainer};
   `,
   footer: css`
     display: flex;
-    gap: ${token.marginXS}px;
+    gap: ${cssVar.marginXS};
     justify-content: flex-end;
 
-    margin-block-start: ${token.margin}px;
-    padding-block-start: ${token.paddingXS}px;
-    border-block-start: 1px solid ${token.colorBorderSecondary};
+    margin-block-start: ${cssVar.margin};
+    padding-block-start: ${cssVar.paddingXS};
+    border-block-start: 1px solid ${cssVar.colorBorderSecondary};
   `,
   markdown: css`
     p {
-      color: ${token.colorTextDescription};
+      color: ${cssVar.colorTextDescription};
     }
   `,
 }));
 
 const MCPConfigForm = memo<MCPConfigFormProps>(({ configSchema, identifier, onCancel }) => {
-  const { styles } = useStyles();
   const { t } = useTranslation(['plugin', 'common']);
-  const [form] = AForm.useForm();
   const [loading, setLoading] = useState(false);
 
   const { installMCPPlugin } = useToolStore();
@@ -63,23 +59,25 @@ const MCPConfigForm = memo<MCPConfigFormProps>(({ configSchema, identifier, onCa
     }
   };
 
+  const form = useForm<Record<string, any>>({ onSubmit: handleSubmit });
+
   const handleCancel = () => {
     if (onCancel) {
       onCancel();
     } else {
-      // 默认行为：清理安装进度
+      // Default behavior: clear installation progress
       useToolStore.getState().updateMCPInstallProgress(identifier, undefined);
     }
   };
 
   return (
-    <motion.div
+    <m.div
       animate={{ y: 0 }}
       className={styles.container}
       initial={{ y: 8 }}
       transition={{ delay: 0.1, duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
     >
-      <motion.div
+      <m.div
         animate={{ opacity: 1, y: 0 }}
         initial={{ opacity: 0, y: 4 }}
         transition={{ delay: 0.15, duration: 0.2 }}
@@ -90,9 +88,9 @@ const MCPConfigForm = memo<MCPConfigFormProps>(({ configSchema, identifier, onCa
             {t('mcpInstall.configurationDescription')}
           </span>
         </Flexbox>
-      </motion.div>
+      </m.div>
 
-      <motion.div
+      <m.div
         animate={{ opacity: 1, y: 0 }}
         initial={{ opacity: 0, y: 4 }}
         transition={{ delay: 0.2, duration: 0.2 }}
@@ -100,6 +98,9 @@ const MCPConfigForm = memo<MCPConfigFormProps>(({ configSchema, identifier, onCa
         <Form
           form={form}
           gap={12}
+          itemsType={'flat'}
+          layout={'vertical'}
+          variant={'borderless'}
           items={items
             .filter((item) => configSchema.required?.includes(item.name))
             .map((item) => ({
@@ -117,34 +118,28 @@ const MCPConfigForm = memo<MCPConfigFormProps>(({ configSchema, identifier, onCa
                   {item.desc as string}
                 </Markdown>
               ),
-              key: item.label,
               label: item.label,
               name: item.name,
-              rules: [{ required: true }],
+              required: true,
               tag: item.tag,
-              valuePropName: item.type === 'boolean' ? 'checked' : undefined,
             }))}
-          itemsType={'flat'}
-          layout={'vertical'}
-          onFinish={handleSubmit}
-          variant={'borderless'}
         />
-      </motion.div>
+      </m.div>
 
-      <motion.div
+      <m.div
         animate={{ opacity: 1, y: 0 }}
         className={styles.footer}
         initial={{ opacity: 0, y: 4 }}
         transition={{ delay: 0.25, duration: 0.2 }}
       >
-        <Button onClick={handleCancel} size="small">
+        <Button size="small" onClick={handleCancel}>
           {t('common:cancel')}
         </Button>
-        <Button loading={loading} onClick={() => form.submit()} size="small" type="primary">
+        <Button loading={loading} size="small" type="primary" onClick={() => form.submit()}>
           {t('mcpInstall.continueInstall')}
         </Button>
-      </motion.div>
-    </motion.div>
+      </m.div>
+    </m.div>
   );
 });
 

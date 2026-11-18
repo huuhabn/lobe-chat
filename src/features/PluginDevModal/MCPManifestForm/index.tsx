@@ -1,94 +1,193 @@
-import { Alert, FormItem, Input, InputPassword } from '@lobehub/ui';
-import { Button, Divider, Form, FormInstance, Radio } from 'antd';
+import { type LobeToolCustomPlugin, type McpConnectVia } from '@lobechat/types';
+import { isDeviceOnlyMcpEndpoint } from '@lobechat/utils/mcpEndpoint';
+import {
+  Alert,
+  Button,
+  Divider,
+  Flexbox,
+  Input,
+  InputPassword,
+  RadioGroup,
+  Text,
+} from '@lobehub/ui';
+import { type FieldPath, Form, type FormInstance, useWatch } from '@lobehub/ui/form';
 import isEqual from 'fast-deep-equal';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Flexbox } from 'react-layout-kit';
 
 import KeyValueEditor from '@/components/KeyValueEditor';
 import MCPStdioCommandInput from '@/components/MCPStdioCommandInput';
+import ErrorDetails from '@/features/MCP/MCPInstallProgress/InstallError/ErrorDetails';
+import { lambdaClient } from '@/libs/trpc/client';
 import { useToolStore } from '@/store/tool';
 import { mcpStoreSelectors, pluginSelectors } from '@/store/tool/selectors';
+import { type McpConnectionParams, type MCPErrorInfoMetadata } from '@/types/plugins';
 
 import ArgsInput from './ArgsInput';
+import BoundDeviceSelect from './BoundDeviceSelect';
 import CollapsibleSection from './CollapsibleSection';
 import MCPTypeSelect from './MCPTypeSelect';
 import QuickImportSection from './QuickImportSection';
+import { hasAdvancedValue, useAdvancedSectionExpanded } from './useAdvancedSection';
 
 interface MCPManifestFormProps {
-  form: FormInstance;
+  /**
+   * Expose the OAuth auth type. Only the custom-connector entry sets this — the
+   * OAuth flow is backed by the connector subsystem, so it must NOT show up for
+   * the plain custom-plugin DevModal callers (editing plugins, agent tools, …).
+   */
+  /**
+   * Let a server that runs on the user's device be bound to one device. Only
+   * the custom-connector entry sets this: the binding is stored on the
+   * connector (`metadata.boundDeviceId`), which plain custom plugins don't have.
+   */
+  enableDeviceBinding?: boolean;
+  enableOAuth?: boolean;
+  form: FormInstance<LobeToolCustomPlugin>;
   isEditMode?: boolean;
+  /** What saving the OAuth settings will do to the connected accounts. */
+  oauthNotice?: OAuthNotice;
+  /**
+   * Run the connector OAuth authorize flow. Called instead of the token-less
+   * manifest test when the OAuth auth type is selected (testing an OAuth server
+   * without authorizing first only ever 401s). Omitted while saving would not
+   * authorize (an edit that keeps the connected accounts), which hides the
+   * button: there is nothing to authorize or test.
+   */
+  onAuthorizeOAuth?: () => void;
 }
 
-const HTTP_URL_KEY = ['customParams', 'mcp', 'url'];
-const STDIO_COMMAND = ['customParams', 'mcp', 'command'];
-const STDIO_ARGS = ['customParams', 'mcp', 'args'];
-const STDIO_ENV = ['customParams', 'mcp', 'env'];
-const MCP_TYPE = ['customParams', 'mcp', 'type'];
-const DESC_TYPE = ['customParams', 'description'];
-// 新增认证相关常量
-const AUTH_TYPE = ['customParams', 'mcp', 'auth', 'type'];
-const AUTH_TOKEN = ['customParams', 'mcp', 'auth', 'token'];
-// 新增 headers 相关常量
-const HEADERS = ['customParams', 'mcp', 'headers'];
+export interface OAuthNotice {
+  text: string;
+  /** `warning` when saving removes accounts; `info` when it keeps them. */
+  type: 'info' | 'warning';
+}
 
-const MCPManifestForm = ({ form, isEditMode }: MCPManifestFormProps) => {
+const HTTP_URL_KEY = 'customParams.mcp.url';
+const CONNECT_VIA = 'customParams.mcp.connectVia';
+const BOUND_DEVICE = 'customParams.mcp.boundDeviceId';
+const STDIO_COMMAND = 'customParams.mcp.command';
+const STDIO_ARGS = 'customParams.mcp.args';
+const STDIO_ENV = 'customParams.mcp.env';
+const MCP_TYPE = 'customParams.mcp.type';
+const DESC_TYPE = 'customParams.description';
+// Authentication-related constants
+const AUTH_TYPE = 'customParams.mcp.auth.type';
+const AUTH_TOKEN = 'customParams.mcp.auth.token';
+const AUTH_CLIENT_ID = 'customParams.mcp.auth.clientId';
+const AUTH_CLIENT_SECRET = 'customParams.mcp.auth.clientSecret';
+// Headers-related constants
+const HEADERS = 'customParams.mcp.headers';
+
+/** Unset reads as `auto`, the behavior a server without the choice always had. */
+const ConnectViaRadio = ({
+  onChange,
+  options,
+  value,
+}: {
+  onChange?: (value: McpConnectVia) => void;
+  options: { label: string; value: McpConnectVia }[];
+  value?: McpConnectVia;
+}) => (
+  <RadioGroup
+    options={options}
+    style={{ width: '100%' }}
+    value={value ?? 'auto'}
+    onChange={(next) => onChange?.(next as McpConnectVia)}
+  />
+);
+
+const MCPManifestForm = ({
+  form,
+  isEditMode,
+  enableDeviceBinding,
+  enableOAuth,
+  onAuthorizeOAuth,
+  oauthNotice,
+}: MCPManifestFormProps) => {
   const { t } = useTranslation('plugin');
-  const mcpType = Form.useWatch(MCP_TYPE, form);
-  const authType = Form.useWatch(AUTH_TYPE, form);
+  const mcpType = useWatch(form, MCP_TYPE);
+  const authType = useWatch(form, AUTH_TYPE);
+  const connectVia = useWatch(form, CONNECT_VIA);
+  const httpUrl = useWatch(form, HTTP_URL_KEY);
+  // Only a server that runs on the user's device can be bound to one
+  const showDeviceBinding =
+    enableDeviceBinding &&
+    (mcpType === 'stdio' ||
+      (mcpType === 'http' && isDeviceOnlyMcpEndpoint({ connectVia, type: 'http', url: httpUrl })));
+  // For OAuth servers there is no token to test with — "testing" the connection
+  // means running the authorize flow instead.
+  const isOAuth = enableOAuth && mcpType === 'http' && authType === 'oauth2';
+
+  const clientId = useWatch(form, AUTH_CLIENT_ID);
+  const clientSecret = useWatch(form, AUTH_CLIENT_SECRET);
+  const headers = useWatch(form, HEADERS);
+  const [advancedExpanded, setAdvancedExpanded] = useAdvancedSectionExpanded(
+    hasAdvancedValue({ clientId, clientSecret, connectVia, headers, isOAuth }),
+  );
+
+  // The redirect URI the server will use at authorize time (APP_URL-based), shown
+  // so the user registers a matching URI on their OAuth app. Fetched lazily once
+  // the OAuth auth type is in play.
+  const [redirectUri, setRedirectUri] = useState('');
+  useEffect(() => {
+    if (!enableOAuth || authType !== 'oauth2' || redirectUri) return;
+    lambdaClient.connector.getRedirectUri
+      .query()
+      .then((r) => setRedirectUri(r.redirectUri))
+      .catch(() => {
+        if (typeof window !== 'undefined') {
+          setRedirectUri(`${window.location.origin}/oauth/connector/callback`);
+        }
+      });
+  }, [enableOAuth, authType, redirectUri]);
 
   const pluginIds = useToolStore(pluginSelectors.storeAndInstallPluginsIdList);
   const [isTesting, setIsTesting] = useState(false);
   const testMcpConnection = useToolStore((s) => s.testMcpConnection);
 
-  // 使用 identifier 来跟踪测试状态（如果表单中有的话）
-  const formValues = form.getFieldsValue();
-  const identifier = formValues?.identifier || 'temp-test-id';
+  // Use identifier to track test state (if present in the form)
+  const identifier = form.getValue('identifier') || 'temp-test-id';
   const testState = useToolStore(mcpStoreSelectors.getMCPConnectionTestState(identifier), isEqual);
 
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [errorMetadata, setErrorMetadata] = useState<MCPErrorInfoMetadata | null>(null);
 
   const handleTestConnection = async () => {
     setIsTesting(true);
     setConnectionError(null);
+    setErrorMetadata(null);
 
     // Manually trigger validation for fields needed for the test
-    let isValid = false;
-    try {
-      const fieldsToValidate = [
-        ...(mcpType === 'http' ? [HTTP_URL_KEY] : [STDIO_COMMAND, STDIO_ARGS]),
-      ];
+    const fieldsToValidate: FieldPath<LobeToolCustomPlugin>[] =
+      mcpType === 'http' ? [HTTP_URL_KEY] : [STDIO_COMMAND, STDIO_ARGS];
 
-      // 如果是 HTTP 类型，还需要验证认证字段
-      if (mcpType === 'http') {
-        fieldsToValidate.push(AUTH_TYPE);
-        const currentAuthType = form.getFieldValue(AUTH_TYPE);
-        if (currentAuthType === 'bearer') {
-          fieldsToValidate.push(AUTH_TOKEN);
-        }
+    // For HTTP type, also validate authentication fields
+    if (mcpType === 'http') {
+      fieldsToValidate.push(AUTH_TYPE);
+      const currentAuthType = form.getValue(AUTH_TYPE);
+      if (currentAuthType === 'bearer') {
+        fieldsToValidate.push(AUTH_TOKEN);
       }
-
-      await form.validateFields(fieldsToValidate);
-      isValid = true;
-    } catch {
-      // no-thing
     }
 
-    if (!isValid) {
+    const { valid } = await form.validate(fieldsToValidate);
+
+    if (!valid) {
       setIsTesting(false);
       return;
     }
 
     try {
-      const values = form.getFieldsValue();
+      const values = form.getValues();
       const id = values.identifier;
       const mcp = values.customParams?.mcp;
       const description = values.customParams?.description;
       const avatar = values.customParams?.avatar;
 
-      // 使用 mcpStore 的 testMcpConnection 方法
+      // Use mcpStore's testMcpConnection method
       const result = await testMcpConnection({
-        connection: mcp,
+        connection: mcp as McpConnectionParams['connection'],
         identifier: id,
         metadata: { avatar, description },
       });
@@ -96,14 +195,31 @@ const MCPManifestForm = ({ form, isEditMode }: MCPManifestFormProps) => {
       if (result.success && result.manifest) {
         // Optionally update form if manifest ID differs or to store the fetched manifest
         // Be careful about overwriting user input if not desired
-        form.setFieldsValue({ manifest: result.manifest });
-        setConnectionError(null); // 清除本地错误状态
+        form.setValues({ manifest: result.manifest });
+        setConnectionError(null); // Clear local error state
+        setErrorMetadata(null);
       } else if (result.error) {
-        // Store 已经处理了错误状态，这里可以选择显示额外的用户友好提示
+        // Store has already handled the error state; optionally show additional user-friendly messages here
         const errorMessage = t('error.testConnectionFailed', {
           error: result.error,
         });
         setConnectionError(errorMessage);
+
+        // Build error metadata for detailed display
+        if (result.errorLog || mcpType === 'stdio') {
+          setErrorMetadata({
+            errorLog: result.errorLog,
+            params:
+              mcpType === 'stdio'
+                ? {
+                    args: mcp?.args,
+                    command: mcp?.command,
+                    type: 'stdio',
+                  }
+                : undefined,
+            timestamp: Date.now(),
+          });
+        }
       }
     } catch (error) {
       // Handle unexpected errors
@@ -122,74 +238,57 @@ const MCPManifestForm = ({ form, isEditMode }: MCPManifestFormProps) => {
       <QuickImportSection
         form={form}
         isEditMode={isEditMode}
-        onClearConnectionError={() => setConnectionError(null)}
+        onClearConnectionError={() => {
+          setConnectionError(null);
+          setErrorMetadata(null);
+        }}
       />
       <Form form={form} layout={'vertical'}>
         <Flexbox>
-          <Form.Item
-            initialValue={'http'}
-            label={t('dev.mcp.type.title')}
-            name={['customParams', 'mcp', 'type']}
-            rules={[{ required: true }]}
-          >
+          <Form.Field required label={t('dev.mcp.type.title')} name={MCP_TYPE}>
             <MCPTypeSelect />
-          </Form.Item>
-          <FormItem
+          </Form.Field>
+          <Form.Field
             desc={t('dev.mcp.identifier.desc')}
             label={t('dev.mcp.identifier.label')}
             name={'identifier'}
-            rules={[
-              { message: t('dev.mcp.identifier.required'), required: true },
-              {
-                message: t('dev.mcp.identifier.invalid'),
-                pattern: /^[\w-]+$/,
-              },
-              isEditMode
-                ? {}
-                : {
-                    message: t('dev.meta.identifier.errorDuplicate'),
-                    validator: async () => {
-                      const id = form.getFieldValue('identifier');
-                      if (!id) return true;
-                      if (pluginIds.includes(id)) {
-                        throw new Error('Duplicate');
-                      }
-                    },
-                  },
-            ]}
+            required={t('dev.mcp.identifier.required')}
             tag={'identifier'}
+            validate={(value?: string) => {
+              if (!value) return;
+              if (!/^[\w-]+$/.test(value)) return t('dev.mcp.identifier.invalid');
+              if (!isEditMode && pluginIds.includes(value))
+                return t('dev.meta.identifier.errorDuplicate');
+            }}
           >
             <Input placeholder={t('dev.mcp.identifier.placeholder')} />
-          </FormItem>
+          </Form.Field>
           {mcpType === 'http' && (
             <>
-              <FormItem
+              <Form.Field
                 desc={t('dev.mcp.url.desc')}
                 label={t('dev.mcp.url.label')}
                 name={HTTP_URL_KEY}
-                rules={[
-                  { message: t('dev.mcp.url.required'), required: true },
-                  {
-                    message: t('dev.mcp.url.invalid'),
-                    validator: async (_, value) => {
-                      if (!value) return true;
-
-                      // 如果不是 URL 就会自动抛出错误
-                      new URL(value);
-                    },
-                  },
-                ]}
+                required={t('dev.mcp.url.required')}
                 tag={'url'}
+                validate={(value?: string) => {
+                  if (!value) return;
+                  try {
+                    new URL(value);
+                  } catch {
+                    return t('dev.mcp.url.invalid');
+                  }
+                }}
               >
                 <Input placeholder="https://mcp.higress.ai/mcp-github/xxxxx" />
-              </FormItem>
-              <FormItem
+              </Form.Field>
+              <Form.Field
                 desc={t('dev.mcp.auth.desc')}
-                initialValue={'none'}
                 label={t('dev.mcp.auth.label')}
                 name={AUTH_TYPE}
               >
-                <Radio.Group
+                <RadioGroup
+                  style={{ width: '100%' }}
                   options={[
                     {
                       label: t('dev.mcp.auth.none'),
@@ -199,52 +298,120 @@ const MCPManifestForm = ({ form, isEditMode }: MCPManifestFormProps) => {
                       label: t('dev.mcp.auth.bear'),
                       value: 'bearer',
                     },
+                    ...(enableOAuth
+                      ? [
+                          {
+                            label: t('dev.mcp.auth.oauth'),
+                            value: 'oauth2',
+                          },
+                        ]
+                      : []),
                   ]}
-                  style={{ width: '100%' }}
                 />
-              </FormItem>
+              </Form.Field>
               {authType === 'bearer' && (
-                <FormItem
+                <Form.Field
                   desc={t('dev.mcp.auth.token.desc')}
                   label={t('dev.mcp.auth.token.label')}
                   name={AUTH_TOKEN}
-                  rules={[{ message: t('dev.mcp.auth.token.required'), required: true }]}
+                  required={t('dev.mcp.auth.token.required')}
                 >
-                  <InputPassword placeholder={t('dev.mcp.auth.token.placeholder')} />
-                </FormItem>
+                  <InputPassword
+                    autoComplete="new-password"
+                    placeholder={t('dev.mcp.auth.token.placeholder')}
+                  />
+                </Form.Field>
               )}
-              <CollapsibleSection title={t('dev.mcp.advanced.title')}>
-                <FormItem
+              <CollapsibleSection
+                expanded={advancedExpanded}
+                title={t('dev.mcp.advanced.title')}
+                onExpandedChange={setAdvancedExpanded}
+              >
+                <Form.Field
+                  label={t('dev.mcp.connectVia.label')}
+                  name={CONNECT_VIA}
+                  desc={
+                    connectVia === 'device'
+                      ? t('dev.mcp.connectVia.deviceDesc')
+                      : t('dev.mcp.connectVia.autoDesc')
+                  }
+                >
+                  <ConnectViaRadio
+                    options={[
+                      { label: t('dev.mcp.connectVia.auto'), value: 'auto' },
+                      { label: t('dev.mcp.connectVia.device'), value: 'device' },
+                    ]}
+                  />
+                </Form.Field>
+                {enableOAuth && authType === 'oauth2' && (
+                  <>
+                    <Form.Field
+                      desc={t('dev.mcp.auth.oauth.clientId.desc')}
+                      label={t('dev.mcp.auth.oauth.clientId.label')}
+                      name={AUTH_CLIENT_ID}
+                    >
+                      <Input placeholder={t('dev.mcp.auth.oauth.clientId.placeholder')} />
+                    </Form.Field>
+                    <Form.Field
+                      desc={t('dev.mcp.auth.oauth.clientSecret.desc')}
+                      label={t('dev.mcp.auth.oauth.clientSecret.label')}
+                      name={AUTH_CLIENT_SECRET}
+                    >
+                      <InputPassword
+                        autoComplete="new-password"
+                        placeholder={t('dev.mcp.auth.oauth.clientSecret.placeholder')}
+                      />
+                    </Form.Field>
+                    <div
+                      style={{
+                        color: 'var(--lobe-colors-textDescription)',
+                        fontSize: 12,
+                        marginBottom: 8,
+                      }}
+                    >
+                      {t('dev.mcp.auth.oauth.redirectHint')}
+                      <br />
+                      <code style={{ wordBreak: 'break-all' }}>{redirectUri}</code>
+                    </div>
+                  </>
+                )}
+                <Form.Field
                   desc={t('dev.mcp.headers.desc')}
                   label={t('dev.mcp.headers.label')}
                   name={HEADERS}
                 >
                   <KeyValueEditor addButtonText={t('dev.mcp.headers.add')} />
-                </FormItem>
+                </Form.Field>
               </CollapsibleSection>
             </>
           )}
           {mcpType === 'stdio' && (
             <>
-              <FormItem
+              <Form.Field
                 desc={t('dev.mcp.command.desc')}
                 label={t('dev.mcp.command.label')}
                 name={STDIO_COMMAND}
-                rules={[{ message: t('dev.mcp.command.required'), required: true }]}
+                required={t('dev.mcp.command.required')}
                 tag={'command'}
               >
-                <MCPStdioCommandInput placeholder={t('dev.mcp.command.placeholder')} />
-              </FormItem>
-              <FormItem
+                <MCPStdioCommandInput
+                  placeholder={t('dev.mcp.command.placeholder')}
+                  onParsedArgs={(args) => {
+                    const existing = form.getValue(STDIO_ARGS) ?? [];
+                    form.setValue(STDIO_ARGS, [...args, ...existing.filter(Boolean)]);
+                  }}
+                />
+              </Form.Field>
+              <Form.Field
                 desc={t('dev.mcp.args.desc')}
                 label={t('dev.mcp.args.label')}
                 name={STDIO_ARGS}
-                rules={[{ message: t('dev.mcp.args.required'), required: true }]}
+                required={t('dev.mcp.args.required')}
                 tag={'args'}
               >
                 <ArgsInput placeholder={t('dev.mcp.args.placeholder')} />
-              </FormItem>
-              <FormItem
+              </Form.Field>
+              <Form.Field
                 extra={t('dev.mcp.env.desc')}
                 label={t('dev.mcp.env.label')}
                 name={STDIO_ENV}
@@ -254,47 +421,65 @@ const MCPManifestForm = ({ form, isEditMode }: MCPManifestFormProps) => {
                   addButtonText={t('dev.mcp.env.add')}
                   keyPlaceholder="VARIABLE_NAME"
                 />
-              </FormItem>
+              </Form.Field>
             </>
           )}
-          <FormItem colon={false} label={t('dev.mcp.testConnectionTip')} layout={'horizontal'}>
-            <Flexbox align={'center'} gap={8} horizontal justify={'flex-end'}>
-              <Button
-                loading={isTesting}
-                onClick={handleTestConnection}
-                type={!!mcpType ? 'primary' : undefined}
-              >
-                {t('dev.mcp.testConnection')}
-              </Button>
-            </Flexbox>
-          </FormItem>
+          {showDeviceBinding && (
+            <Form.Field
+              desc={t('dev.mcp.boundDevice.desc')}
+              label={t('dev.mcp.boundDevice.label')}
+              name={BOUND_DEVICE}
+            >
+              <BoundDeviceSelect />
+            </Form.Field>
+          )}
+          {isOAuth &&
+            oauthNotice &&
+            (oauthNotice.type === 'warning' ? (
+              <Alert showIcon title={oauthNotice.text} type={'warning'} />
+            ) : (
+              <Text fontSize={12} type={'secondary'}>
+                {oauthNotice.text}
+              </Text>
+            ))}
+          {(!isOAuth || onAuthorizeOAuth) && (
+            <Form.Field label={t('dev.mcp.testConnectionTip')} layout={'horizontal'}>
+              <Flexbox horizontal align={'center'} gap={8} justify={'flex-end'}>
+                <Button
+                  loading={isTesting}
+                  type={!!mcpType ? 'primary' : undefined}
+                  onClick={isOAuth ? onAuthorizeOAuth : handleTestConnection}
+                >
+                  {isOAuth ? t('dev.mcp.auth.oauth.authorize') : t('dev.mcp.testConnection')}
+                </Button>
+              </Flexbox>
+            </Form.Field>
+          )}
           {(connectionError || testState.error) && (
             <Alert
               closable
-              message={connectionError || testState.error}
-              onClose={() => setConnectionError(null)}
               showIcon
-              style={{ marginBottom: 16 }}
+              extra={errorMetadata ? <ErrorDetails errorInfo={errorMetadata} /> : undefined}
+              title={connectionError || testState.error}
               type="error"
+              onClose={() => {
+                setConnectionError(null);
+                setErrorMetadata(null);
+              }}
             />
           )}
-          <FormItem name={'manifest'} noStyle />
-          <Divider />
-          <FormItem
+          <Divider style={{ marginBlock: 24 }} />
+          <Form.Field
             desc={t('dev.mcp.desc.desc')}
             label={t('dev.mcp.desc.label')}
             name={DESC_TYPE}
             tag={'description'}
           >
             <Input placeholder={t('dev.mcp.desc.placeholder')} />
-          </FormItem>
-          <FormItem
-            label={t('dev.mcp.avatar.label')}
-            name={['customParams', 'avatar']}
-            tag={'avatar'}
-          >
+          </Form.Field>
+          <Form.Field label={t('dev.mcp.avatar.label')} name={'customParams.avatar'} tag={'avatar'}>
             <Input placeholder={'https://plugin-avatar.com'} />
-          </FormItem>
+          </Form.Field>
         </Flexbox>
       </Form>
     </>

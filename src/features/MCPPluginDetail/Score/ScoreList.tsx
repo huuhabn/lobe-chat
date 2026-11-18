@@ -1,8 +1,8 @@
-import { Divider } from 'antd';
+import { Divider, Flexbox } from '@lobehub/ui';
 import { Fragment, memo } from 'react';
-import { Flexbox } from 'react-layout-kit';
 
-import ScoreItem, { ScoreItemProps } from './ScoreItem';
+import ScoreItem from './ScoreItem';
+import { type ScoreItemProps } from './ScoreItem';
 
 interface ScoreListProps {
   items: ScoreItemProps[];
@@ -14,7 +14,7 @@ const ScoreList = memo<ScoreListProps>(({ items }) => {
       {items.map((item, index) => (
         <Fragment key={item.key}>
           <ScoreItem {...item} key={item.key} />
-          {index < items.length - 1 && <Divider style={{ margin: 0 }} />}
+          {index < items.length - 1 && <Divider />}
         </Fragment>
       ))}
     </Flexbox>

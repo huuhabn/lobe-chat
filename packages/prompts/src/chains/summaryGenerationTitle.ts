@@ -1,8 +1,8 @@
-import { ChatStreamPayload } from '@lobechat/types';
+import type { ChatStreamPayload } from '@lobechat/types';
 
 export const chainSummaryGenerationTitle = (
   prompts: string[],
-  modal: 'image' | 'video',
+  modal: 'image' | 'music' | 'video',
   locale: string,
 ): Partial<ChatStreamPayload> => {
   // Format multiple prompts for better readability

@@ -1,18 +1,27 @@
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { imageUrlToBase64 } from '../../utils/imageToBase64';
+import { clearReferenceImageCache } from '../../utils/referenceImageCache';
 import { parseDataUri } from '../../utils/uriParser';
+import { videoUrlToBase64 } from '../../utils/videoToBase64';
 import {
   convertImageUrlToFile,
   convertMessageContent,
-  convertOpenAIMessages,
-  convertOpenAIResponseInputs,
+  type ExtendedChatCompletionContentPart,
 } from './openai';
 
 // 模拟依赖
-vi.mock('../../utils/imageToBase64');
+vi.mock('../../utils/imageToBase64', () => ({
+  imageUrlToBase64: vi.fn(),
+}));
+vi.mock('../../utils/videoToBase64', () => ({
+  videoUrlToBase64: vi.fn(),
+}));
 vi.mock('../../utils/uriParser');
+
+const MP3_BASE64 = 'SUQzBAAAAAA=';
+const WAV_BASE64 = 'UklGRjAwMDBXQVZFZm10IA==';
 
 describe('convertMessageContent', () => {
   beforeEach(() => {
@@ -27,6 +36,106 @@ describe('convertMessageContent', () => {
     const content = { type: 'text', text: 'Hello' } as OpenAI.ChatCompletionContentPart;
     const result = await convertMessageContent(content);
     expect(result).toEqual(content);
+  });
+
+  it.each([
+    ['WAV', 'audio/wav', 'wav', WAV_BASE64],
+    ['MP3', 'audio/mpeg', 'mp3', MP3_BASE64],
+  ] as const)(
+    'should convert a base64 %s data URI to input_audio',
+    async (_, mimeType, format, base64) => {
+      const content = {
+        audio_url: {
+          codec: format,
+          durationMs: 2500,
+          mimeType,
+          url: `data:${mimeType};base64,${base64}`,
+        },
+        type: 'audio_url',
+      } as const;
+      vi.mocked(parseDataUri).mockReturnValue({
+        base64,
+        mimeType,
+        type: 'base64',
+      });
+
+      await expect(convertMessageContent(content, { supportsAudioInput: true })).resolves.toEqual({
+        input_audio: { data: base64, format },
+        type: 'input_audio',
+      });
+      expect(imageUrlToBase64).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ['WAV', 'audio/wav', 'wav', WAV_BASE64],
+    ['MP3', 'audio/mpeg', 'mp3', MP3_BASE64],
+  ] as const)(
+    'should safely download a %s URL and convert it to input_audio',
+    async (_, mimeType, format, base64) => {
+      const url = `https://files.example.com/voice.${format}`;
+      const content = { audio_url: { url }, type: 'audio_url' } as const;
+      vi.mocked(parseDataUri).mockReturnValue({ base64: null, mimeType: null, type: 'url' });
+      vi.mocked(imageUrlToBase64).mockResolvedValue({ base64, mimeType });
+
+      await expect(convertMessageContent(content, { supportsAudioInput: true })).resolves.toEqual({
+        input_audio: { data: base64, format },
+        type: 'input_audio',
+      });
+      expect(imageUrlToBase64).toHaveBeenCalledWith(url, { maxBytes: 20 * 1024 * 1024 });
+    },
+  );
+
+  it('should fail closed when the provider adapter does not enable audio input', async () => {
+    const content = {
+      audio_url: { url: 'data:audio/wav;base64,audioBase64' },
+      type: 'audio_url',
+    } as const;
+
+    await expect(convertMessageContent(content)).rejects.toThrow(
+      'Audio input is not supported by this provider runtime',
+    );
+    expect(parseDataUri).not.toHaveBeenCalled();
+    expect(imageUrlToBase64).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['base64 data', { base64: 'audioBase64', mimeType: 'audio/ogg', type: 'base64' as const }],
+    ['download URL', { base64: null, mimeType: null, type: 'url' as const }],
+  ])('should reject an unsupported audio MIME type from %s', async (_, parsedUri) => {
+    const url =
+      parsedUri.type === 'url'
+        ? 'https://files.example.com/voice.ogg'
+        : 'data:audio/ogg;base64,audioBase64';
+    const content = { audio_url: { url }, type: 'audio_url' } as const;
+    vi.mocked(parseDataUri).mockReturnValue(parsedUri);
+    if (parsedUri.type === 'url') {
+      vi.mocked(imageUrlToBase64).mockResolvedValue({
+        base64: 'downloadedAudio',
+        mimeType: 'audio/ogg',
+      });
+    }
+
+    await expect(convertMessageContent(content, { supportsAudioInput: true })).rejects.toThrow(
+      /only supports (?:base64 )?WAV or MP3/i,
+    );
+  });
+
+  it('should reject bytes that only claim to be WAV in persisted metadata', async () => {
+    const url = 'https://files.example.com/spoofed.wav';
+    const content = {
+      audio_url: { mimeType: 'audio/wav', url },
+      type: 'audio_url',
+    } as const;
+    vi.mocked(parseDataUri).mockReturnValue({ base64: null, mimeType: null, type: 'url' });
+    vi.mocked(imageUrlToBase64).mockResolvedValue({
+      base64: 'bm90IGF1ZGlv',
+      mimeType: 'application/octet-stream',
+    });
+
+    await expect(convertMessageContent(content, { supportsAudioInput: true })).rejects.toThrow(
+      'only supports WAV or MP3 files',
+    );
   });
 
   it('should convert image URL to base64 when necessary', async () => {
@@ -70,228 +179,121 @@ describe('convertMessageContent', () => {
     expect(result).toEqual(content);
     expect(imageUrlToBase64).not.toHaveBeenCalled();
   });
-});
 
-describe('convertOpenAIMessages', () => {
-  it('should convert string content messages', async () => {
-    const messages = [
-      { role: 'user', content: 'Hello' },
-      { role: 'assistant', content: 'Hi there' },
-    ] as OpenAI.ChatCompletionMessageParam[];
-
-    const result = await convertOpenAIMessages(messages);
-
-    expect(result).toEqual(messages);
-  });
-
-  it('should convert array content messages', async () => {
-    const messages = [
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: 'Hello' },
-          { type: 'image_url', image_url: { url: 'https://example.com/image.jpg' } },
-        ],
-      },
-    ] as OpenAI.ChatCompletionMessageParam[];
-
-    vi.spyOn(Promise, 'all');
-    vi.mocked(parseDataUri).mockReturnValue({ type: 'url', base64: null, mimeType: null });
-    vi.mocked(imageUrlToBase64).mockResolvedValue({
-      base64: 'base64String',
-      mimeType: 'image/jpeg',
-    });
-
-    process.env.LLM_VISION_IMAGE_USE_BASE64 = '1';
-
-    const result = await convertOpenAIMessages(messages);
-
-    expect(result).toEqual([
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: 'Hello' },
-          {
-            type: 'image_url',
-            image_url: { url: 'data:image/jpeg;base64,base64String' },
-          },
-        ],
-      },
-    ]);
-
-    expect(Promise.all).toHaveBeenCalledTimes(2); // 一次用于消息数组，一次用于内容数组
-
+  it('should convert image URL when forceImageBase64 is true', async () => {
     process.env.LLM_VISION_IMAGE_USE_BASE64 = undefined;
-  });
-  it('should convert array content messages', async () => {
-    const messages = [
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: 'Hello' },
-          { type: 'image_url', image_url: { url: 'https://example.com/image.jpg' } },
-        ],
-      },
-    ] as OpenAI.ChatCompletionMessageParam[];
 
-    vi.spyOn(Promise, 'all');
+    const content = {
+      type: 'image_url',
+      image_url: { url: 'https://example.com/image.jpg' },
+    } as OpenAI.ChatCompletionContentPart;
+
     vi.mocked(parseDataUri).mockReturnValue({ type: 'url', base64: null, mimeType: null });
     vi.mocked(imageUrlToBase64).mockResolvedValue({
-      base64: 'base64String',
+      base64: 'forcedBase64',
       mimeType: 'image/jpeg',
     });
 
-    const result = await convertOpenAIMessages(messages);
+    const result = await convertMessageContent(content, { forceImageBase64: true });
 
-    expect(result).toEqual(messages);
+    expect(result).toEqual({
+      type: 'image_url',
+      image_url: { url: 'data:image/jpeg;base64,forcedBase64' },
+    });
 
-    expect(Promise.all).toHaveBeenCalledTimes(2); // 一次用于消息数组，一次用于内容数组
-  });
-});
-
-describe('convertOpenAIResponseInputs', () => {
-  it('应该正确转换普通文本消息', async () => {
-    const messages: OpenAI.ChatCompletionMessageParam[] = [
-      { role: 'user', content: 'Hello' },
-      { role: 'assistant', content: 'Hi there!' },
-    ];
-
-    const result = await convertOpenAIResponseInputs(messages);
-
-    expect(result).toEqual([
-      { role: 'user', content: 'Hello' },
-      { role: 'assistant', content: 'Hi there!' },
-    ]);
+    expect(imageUrlToBase64).toHaveBeenCalledWith('https://example.com/image.jpg');
   });
 
-  it('应该正确转换带有工具调用的消息', async () => {
-    const messages: OpenAI.ChatCompletionMessageParam[] = [
-      {
-        role: 'assistant',
-        content: '',
-        tool_calls: [
-          {
-            id: 'call_123',
-            type: 'function',
-            function: {
-              name: 'test_function',
-              arguments: '{"key": "value"}',
-            },
-          },
-        ],
-      },
-    ];
+  it('should convert video URL to base64 when necessary', async () => {
+    process.env.LLM_VISION_VIDEO_USE_BASE64 = '1';
 
-    const result = await convertOpenAIResponseInputs(messages);
+    const content: ExtendedChatCompletionContentPart = {
+      type: 'video_url',
+      video_url: { url: 'https://example.com/video.mp4' },
+    };
 
-    expect(result).toEqual([
-      {
-        arguments: 'test_function',
-        call_id: 'call_123',
-        name: 'test_function',
-        type: 'function_call',
-      },
-    ]);
+    vi.mocked(parseDataUri).mockReturnValue({ type: 'url', base64: null, mimeType: null });
+    vi.mocked(videoUrlToBase64).mockResolvedValue({
+      base64: 'base64String',
+      mimeType: 'video/mp4',
+    });
+
+    const result = await convertMessageContent(content);
+
+    expect(result).toEqual({
+      type: 'video_url',
+      video_url: { url: 'data:video/mp4;base64,base64String' },
+    });
+
+    expect(parseDataUri).toHaveBeenCalledWith('https://example.com/video.mp4');
+    expect(videoUrlToBase64).toHaveBeenCalledWith('https://example.com/video.mp4');
+
+    process.env.LLM_VISION_VIDEO_USE_BASE64 = undefined;
   });
 
-  it('应该正确转换工具响应消息', async () => {
-    const messages: OpenAI.ChatCompletionMessageParam[] = [
-      {
-        role: 'tool',
-        content: 'Function result',
-        tool_call_id: 'call_123',
-      },
-    ];
+  it('should not convert video URL when not necessary', async () => {
+    process.env.LLM_VISION_VIDEO_USE_BASE64 = undefined;
 
-    const result = await convertOpenAIResponseInputs(messages);
+    const content: ExtendedChatCompletionContentPart = {
+      type: 'video_url',
+      video_url: { url: 'https://example.com/video.mp4' },
+    };
 
-    expect(result).toEqual([
-      {
-        call_id: 'call_123',
-        output: 'Function result',
-        type: 'function_call_output',
-      },
-    ]);
+    vi.mocked(parseDataUri).mockReturnValue({ type: 'url', base64: null, mimeType: null });
+
+    const result = await convertMessageContent(content);
+
+    expect(result).toEqual(content);
+    expect(videoUrlToBase64).not.toHaveBeenCalled();
   });
 
-  it('应该正确转换包含图片的消息', async () => {
-    const messages: OpenAI.ChatCompletionMessageParam[] = [
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: 'Here is an image' },
-          {
-            type: 'image_url',
-            image_url: {
-              url: 'data:image/jpeg;base64,test123',
-            },
-          },
-        ],
-      },
-    ];
+  it('should convert video URL when forceVideoBase64 is true', async () => {
+    process.env.LLM_VISION_VIDEO_USE_BASE64 = undefined;
 
-    const result = await convertOpenAIResponseInputs(messages);
+    const content: ExtendedChatCompletionContentPart = {
+      type: 'video_url',
+      video_url: { url: 'https://example.com/video.mp4' },
+    };
 
-    expect(result).toEqual([
-      {
-        role: 'user',
-        content: [
-          { type: 'input_text', text: 'Here is an image' },
-          {
-            type: 'input_image',
-            image_url: 'data:image/jpeg;base64,test123',
-          },
-        ],
-      },
-    ]);
+    vi.mocked(parseDataUri).mockReturnValue({ type: 'url', base64: null, mimeType: null });
+    vi.mocked(videoUrlToBase64).mockResolvedValue({
+      base64: 'forcedBase64',
+      mimeType: 'video/mp4',
+    });
+
+    const result = await convertMessageContent(content, { forceVideoBase64: true });
+
+    expect(result).toEqual({
+      type: 'video_url',
+      video_url: { url: 'data:video/mp4;base64,forcedBase64' },
+    });
+
+    expect(videoUrlToBase64).toHaveBeenCalledWith('https://example.com/video.mp4');
   });
 
-  it('应该正确处理混合类型的消息序列', async () => {
-    const messages: OpenAI.ChatCompletionMessageParam[] = [
-      { role: 'user', content: 'I need help with a function' },
-      {
-        role: 'assistant',
-        content: '',
-        tool_calls: [
-          {
-            id: 'call_456',
-            type: 'function',
-            function: {
-              name: 'get_data',
-              arguments: '{}',
-            },
-          },
-        ],
-      },
-      {
-        role: 'tool',
-        content: '{"result": "success"}',
-        tool_call_id: 'call_456',
-      },
-    ];
+  it('should return original content when video conversion fails', async () => {
+    process.env.LLM_VISION_VIDEO_USE_BASE64 = '1';
 
-    const result = await convertOpenAIResponseInputs(messages);
+    const content: ExtendedChatCompletionContentPart = {
+      type: 'video_url',
+      video_url: { url: 'https://example.com/video.mp4' },
+    };
 
-    expect(result).toEqual([
-      { role: 'user', content: 'I need help with a function' },
-      {
-        arguments: 'get_data',
-        call_id: 'call_456',
-        name: 'get_data',
-        type: 'function_call',
-      },
-      {
-        call_id: 'call_456',
-        output: '{"result": "success"}',
-        type: 'function_call_output',
-      },
-    ]);
+    vi.mocked(parseDataUri).mockReturnValue({ type: 'url', base64: null, mimeType: null });
+    vi.mocked(videoUrlToBase64).mockRejectedValue(new Error('Conversion failed'));
+
+    const result = await convertMessageContent(content);
+
+    expect(result).toEqual(content);
+
+    process.env.LLM_VISION_VIDEO_USE_BASE64 = undefined;
   });
 });
 
 describe('convertImageUrlToFile', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    clearReferenceImageCache();
   });
 
   afterEach(() => {
@@ -402,7 +404,23 @@ describe('convertImageUrlToFile', () => {
         expect(result).toHaveProperty('type', testCase.contentType || 'image/png');
 
         vi.clearAllMocks();
+        clearReferenceImageCache();
       }
+    });
+
+    it('should reuse one download for repeated conversions of the same URL', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
+        headers: new Headers({ 'content-type': 'image/png' }),
+      } satisfies Partial<Response>);
+
+      const first = await convertImageUrlToFile('https://example.com/reference.png');
+      const second = await convertImageUrlToFile('https://example.com/reference.png');
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(first).not.toBe(second);
+      expect(second).toHaveProperty('type', 'image/png');
     });
 
     it('should throw error when HTTP request fails', async () => {

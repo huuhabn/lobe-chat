@@ -1,5 +1,5 @@
-import { z } from 'zod';
 import type { PartialDeep } from 'type-fest';
+import { z } from 'zod';
 
 /**
  * The function that the model called.
@@ -30,8 +30,10 @@ export interface MessageToolCall {
    */
   id: string;
 
+  namespace?: string;
+  thoughtSignature?: string;
   /**
-   * The type of the tool. Currently, only `function` is supported.
+   * For custom tools, function.arguments carries the raw input instead of JSON.
    */
   type: 'function' | string;
 }
@@ -42,6 +44,8 @@ export const MessageToolCallSchema = z.object({
     name: z.string(),
   }),
   id: z.string(),
+  namespace: z.string().optional(),
+  thoughtSignature: z.string().optional(),
   type: z.string(),
 });
 

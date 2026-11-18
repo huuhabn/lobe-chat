@@ -1,56 +1,149 @@
-import {
-  DesktopHotkeyEnum,
-  DesktopHotkeyItem,
-  HotkeyEnum,
-  HotkeyGroupEnum,
-  HotkeyItem,
-  HotkeyScopeEnum,
-  KeyEnum,
-} from '@lobechat/types';
+import type { HotkeyGroupId, HotkeyId, HotkeyRegistration, HotkeyScopeId } from '@lobechat/types';
+
+import { isDesktop } from './version';
 
 const combineKeys = (keys: string[]) => keys.join('+');
 
-export type HotkeyRegistration = HotkeyItem[];
+export const KeyEnum = {
+  Alt: 'alt',
+  Backquote: 'backquote',
+  Backslash: 'backslash',
+  Backspace: 'backspace',
+  BracketLeft: 'bracketleft',
+  BracketRight: 'bracketright',
+  Comma: 'comma',
+  Ctrl: 'ctrl',
+  Down: 'down',
+  Enter: 'enter',
+  Equal: 'equal',
+  Esc: 'esc',
+  Left: 'left',
+  LeftClick: 'left-click',
+  LeftDoubleClick: 'left-double-click',
+  Meta: 'meta',
+  MiddleClick: 'middle-click',
+  Minus: 'minus',
+  Mod: 'mod',
+  Number: '1-9',
+  Period: 'period',
+  Plus: 'equal',
+  QuestionMark: 'slash',
+  Quote: 'quote',
+  Right: 'right',
+  RightClick: 'right-click',
+  RightDoubleClick: 'right-double-click',
+  Semicolon: 'semicolon',
+  Shift: 'shift',
+  Slash: 'slash',
+  Space: 'space',
+  Tab: 'tab',
+  Up: 'up',
+  Zero: '0',
+} as const;
 
-// mod 在 Mac 上是 command 键，alt 在 Win 上是 ctrl 键
+export const HotkeyEnum = {
+  CommandPalette: 'commandPalette',
+  DeleteAndRegenerateMessage: 'deleteAndRegenerateMessage',
+  DeleteLastMessage: 'deleteLastMessage',
+  EditMessage: 'editMessage',
+  FindInTopic: 'findInTopic',
+  NavigateToChat: 'navigateToChat',
+  NextTab: 'nextTab',
+  OpenChatSettings: 'openChatSettings',
+  PrevTab: 'prevTab',
+  OpenHotkeyHelper: 'openHotkeyHelper',
+  OpenTaskFilter: 'openTaskFilter',
+  RegenerateMessage: 'regenerateMessage',
+  SaveDocument: 'saveDocument',
+  SaveTopic: 'saveTopic',
+  Search: 'search',
+  ShowApp: 'showApp',
+  SwitchAgent: 'switchAgent',
+  SwitchTab: 'switchTab',
+  ToggleFavorite: 'toggleFavorite',
+  ToggleLeftPanel: 'toggleLeftPanel',
+  ToggleRightPanel: 'toggleRightPanel',
+  ToggleTerminalPanel: 'toggleTerminalPanel',
+} as const satisfies Record<string, HotkeyId>;
+
+export const HotkeyGroupEnum = {
+  Conversation: 'conversation',
+  Essential: 'essential',
+} as const satisfies Record<string, HotkeyGroupId>;
+
+export const HotkeyScopeEnum = {
+  Chat: 'chat',
+  Files: 'files',
+  Global: 'global',
+  Image: 'image',
+} as const satisfies Record<string, HotkeyScopeId>;
+
+// mod is the command key on Mac, alt is the ctrl key on Windows
 export const HOTKEYS_REGISTRATION: HotkeyRegistration = [
   // basic
   {
     group: HotkeyGroupEnum.Essential,
-    id: HotkeyEnum.Search,
+    id: HotkeyEnum.CommandPalette,
     keys: combineKeys([KeyEnum.Mod, 'k']),
     scopes: [HotkeyScopeEnum.Global],
   },
   {
     group: HotkeyGroupEnum.Essential,
-    id: HotkeyEnum.SwitchAgent,
-    keys: combineKeys([KeyEnum.Ctrl, KeyEnum.Number]),
+    id: HotkeyEnum.Search,
+    keys: combineKeys([KeyEnum.Mod, 'j']),
+    scopes: [HotkeyScopeEnum.Global],
+  },
+  // Desktop's number shortcuts select titlebar tabs, not agents.
+  ...(!isDesktop
+    ? [
+        {
+          group: HotkeyGroupEnum.Essential,
+          id: HotkeyEnum.SwitchAgent,
+          keys: combineKeys([KeyEnum.Ctrl, KeyEnum.Number]),
+          nonEditable: true,
+          scopes: [HotkeyScopeEnum.Global],
+        },
+      ]
+    : []),
+  {
+    group: HotkeyGroupEnum.Essential,
+    id: HotkeyEnum.SwitchTab,
+    // Mod is ⌘ on macOS and Ctrl elsewhere, matching browsers' tab shortcuts.
+    keys: combineKeys([KeyEnum.Mod, KeyEnum.Number]),
+    nonEditable: true,
+    scopes: [HotkeyScopeEnum.Global],
+  },
+  {
+    group: HotkeyGroupEnum.Essential,
+    id: HotkeyEnum.NextTab,
+    keys: combineKeys([KeyEnum.Ctrl, KeyEnum.Tab]),
+    nonEditable: true,
+    scopes: [HotkeyScopeEnum.Global],
+  },
+  {
+    group: HotkeyGroupEnum.Essential,
+    id: HotkeyEnum.PrevTab,
+    keys: combineKeys([KeyEnum.Ctrl, KeyEnum.Shift, KeyEnum.Tab]),
     nonEditable: true,
     scopes: [HotkeyScopeEnum.Global],
   },
   {
     group: HotkeyGroupEnum.Essential,
     id: HotkeyEnum.NavigateToChat,
-    keys: combineKeys([KeyEnum.Ctrl, KeyEnum.Backquote]),
+    keys: combineKeys([KeyEnum.Ctrl, KeyEnum.Shift, KeyEnum.Backquote]),
     scopes: [HotkeyScopeEnum.Global],
-  },
-  {
-    group: HotkeyGroupEnum.Essential,
-    id: HotkeyEnum.ToggleZenMode,
-    keys: combineKeys([KeyEnum.Mod, KeyEnum.Backslash]),
-    scopes: [HotkeyScopeEnum.Chat],
   },
   {
     group: HotkeyGroupEnum.Essential,
     id: HotkeyEnum.ToggleLeftPanel,
     keys: combineKeys([KeyEnum.Mod, KeyEnum.BracketLeft]),
-    scopes: [HotkeyScopeEnum.Chat, HotkeyScopeEnum.Files, HotkeyScopeEnum.Image],
+    scopes: [HotkeyScopeEnum.Global],
   },
   {
     group: HotkeyGroupEnum.Essential,
     id: HotkeyEnum.ToggleRightPanel,
     keys: combineKeys([KeyEnum.Mod, KeyEnum.BracketRight]),
-    scopes: [HotkeyScopeEnum.Chat, HotkeyScopeEnum.Image],
+    scopes: [HotkeyScopeEnum.Global],
   },
   {
     group: HotkeyGroupEnum.Essential,
@@ -58,7 +151,31 @@ export const HOTKEYS_REGISTRATION: HotkeyRegistration = [
     keys: combineKeys([KeyEnum.Ctrl, KeyEnum.Shift, KeyEnum.QuestionMark]),
     scopes: [HotkeyScopeEnum.Global],
   },
+  {
+    group: HotkeyGroupEnum.Essential,
+    id: HotkeyEnum.ToggleFavorite,
+    keys: combineKeys([KeyEnum.Alt, 'f']),
+    scopes: [HotkeyScopeEnum.Global],
+  },
+  {
+    group: HotkeyGroupEnum.Essential,
+    id: HotkeyEnum.OpenTaskFilter,
+    keys: 'f',
+    scopes: [HotkeyScopeEnum.Global],
+  },
   // Chat
+  {
+    group: HotkeyGroupEnum.Conversation,
+    id: HotkeyEnum.FindInTopic,
+    keys: combineKeys([KeyEnum.Mod, 'f']),
+    scopes: [HotkeyScopeEnum.Chat],
+  },
+  {
+    group: HotkeyGroupEnum.Conversation,
+    id: HotkeyEnum.ToggleTerminalPanel,
+    keys: combineKeys([KeyEnum.Ctrl, KeyEnum.Backquote]),
+    scopes: [HotkeyScopeEnum.Chat],
+  },
   {
     group: HotkeyGroupEnum.Conversation,
     id: HotkeyEnum.OpenChatSettings,
@@ -91,36 +208,15 @@ export const HOTKEYS_REGISTRATION: HotkeyRegistration = [
   },
   {
     group: HotkeyGroupEnum.Conversation,
-    id: HotkeyEnum.AddUserMessage,
-    keys: combineKeys([KeyEnum.Alt, KeyEnum.Enter]),
-    // 不通过 Scope 模式激活
-  },
-  {
-    group: HotkeyGroupEnum.Conversation,
     id: HotkeyEnum.EditMessage,
     keys: combineKeys([KeyEnum.Alt, KeyEnum.LeftDoubleClick]),
     nonEditable: true,
     scopes: [HotkeyScopeEnum.Chat],
   },
   {
-    group: HotkeyGroupEnum.Conversation,
-    id: HotkeyEnum.ClearCurrentMessages,
-    keys: combineKeys([KeyEnum.Alt, KeyEnum.Shift, KeyEnum.Backspace]),
-    scopes: [HotkeyScopeEnum.Chat],
-  },
-];
-
-type DesktopHotkeyRegistration = DesktopHotkeyItem[];
-
-// 桌面端快捷键配置
-export const DESKTOP_HOTKEYS_REGISTRATION: DesktopHotkeyRegistration = [
-  {
-    id: DesktopHotkeyEnum.ShowApp,
-    keys: combineKeys([KeyEnum.Ctrl, 'e']),
-  },
-  {
-    id: DesktopHotkeyEnum.OpenSettings,
-    keys: combineKeys([KeyEnum.Mod, KeyEnum.Comma]),
-    nonEditable: true,
+    group: HotkeyGroupEnum.Essential,
+    id: HotkeyEnum.SaveDocument,
+    keys: combineKeys([KeyEnum.Mod, 's']),
+    scopes: [HotkeyScopeEnum.Files],
   },
 ];

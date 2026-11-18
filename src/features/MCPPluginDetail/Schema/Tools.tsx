@@ -1,17 +1,14 @@
-import { Block, Collapse, Highlighter, Icon, Markdown, Tag } from '@lobehub/ui';
-import { Empty } from 'antd';
+import { cssVar, Flexbox, Highlighter, Icon, Markdown, Tag } from '@lobehub/ui';
 import { CheckIcon, MinusIcon } from 'lucide-react';
-import { markdownToTxt } from 'markdown-to-txt';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import InlineTable from '@/components/InlineTable';
+import { markdownToTxt } from '@/utils/markdownToTxt';
 
-import Title from '../../../app/[variants]/(main)/discover/features/Title';
-import CollapseDesc from '../CollapseDesc';
-import CollapseLayout from '../CollapseLayout';
 import { useDetailContext } from '../DetailProvider';
-import { useStyles } from './style';
+import { SchemaEmpty, SchemaItem, SchemaList, SchemaSubtitle } from './SchemaList';
+import { styles } from './style';
 import { ModeType } from './types';
 
 interface ToolsProps {
@@ -21,26 +18,14 @@ interface ToolsProps {
 }
 
 const Tools = memo<ToolsProps>(({ mode, activeKey = [], setActiveKey }) => {
-  const { t } = useTranslation('discover');
+  const { t } = useTranslation(['discover', 'plugin']);
   const { tools } = useDetailContext();
-  const { styles, theme } = useStyles();
 
-  if (!tools)
-    return (
-      <Block variant={'outlined'}>
-        <Empty
-          description={t('mcp.details.schema.tools.empty')}
-          image={Empty.PRESENTED_IMAGE_SIMPLE}
-        />
-      </Block>
-    );
+  if (!tools?.length) return <SchemaEmpty>{t('plugin:mcpEmpty.tools')}</SchemaEmpty>;
 
   return (
-    <Collapse
-      activeKey={activeKey}
-      expandIconPosition={'end'}
-      gap={8}
-      items={tools.map((item) => {
+    <SchemaList activeKey={activeKey} setActiveKey={setActiveKey}>
+      {tools.map((item) => {
         let properties: {
           description?: string;
           name: string;
@@ -57,91 +42,66 @@ const Tools = memo<ToolsProps>(({ mode, activeKey = [], setActiveKey }) => {
             };
           });
         }
-        return {
-          children: (
-            <CollapseLayout
-              items={[
-                {
-                  children: <Markdown>{item.description || ''}</Markdown>,
-                  key: 'instructions',
-                  title: t('mcp.details.schema.tools.instructions'),
-                },
-                {
-                  children:
-                    mode === ModeType.Docs ? (
-                      <InlineTable
-                        columns={[
-                          {
-                            dataIndex: 'name',
-                            render: (_, record) => (
-                              <span
-                                className={styles.code}
-                                style={{
-                                  color: theme.gold,
-                                }}
-                              >
-                                {record.name}
-                              </span>
-                            ),
-                            title: t('mcp.details.schema.tools.table.name'),
-                          },
-                          {
-                            dataIndex: 'type',
-                            render: (_, record) => <Tag className={styles.code}>{record.type}</Tag>,
-                            title: t('mcp.details.schema.tools.table.type'),
-                          },
-                          {
-                            dataIndex: 'required',
-                            render: (_, record) => (
-                              <Icon
-                                color={
-                                  record.required ? theme.colorSuccess : theme.colorTextDescription
-                                }
-                                icon={record.required ? CheckIcon : MinusIcon}
-                              />
-                            ),
-                            title: t('mcp.details.schema.tools.table.required'),
-                          },
-                          {
-                            dataIndex: 'description',
-                            title: t('mcp.details.schema.tools.table.description'),
-                          },
-                        ]}
-                        dataSource={properties}
-                        pagination={false}
-                        rowKey={'name'}
-                      />
-                    ) : (
-                      <Highlighter
-                        language={'json'}
-                        style={{ fontSize: 12 }}
-                        variant={'borderless'}
-                      >
-                        {JSON.stringify(item.inputSchema, null, 2)}
-                      </Highlighter>
-                    ),
-                  key: 'inputSchema',
-                  title: t('mcp.details.schema.tools.inputSchema'),
-                },
-              ]}
-            />
-          ),
-          desc: item.description && (
-            <CollapseDesc hide={activeKey.includes(item.name)}>
-              {markdownToTxt(item.description)}
-            </CollapseDesc>
-          ),
-          key: item.name,
-          label: (
-            <Title id={`tools-${item.name}`} level={3}>
-              {item.name}
-            </Title>
-          ),
-        };
+        return (
+          <SchemaItem
+            desc={item.description ? markdownToTxt(item.description) : undefined}
+            id={`tools-${item.name}`}
+            key={item.name}
+            meta={t('mcp.details.schema.tools.paramsCount', { count: properties.length })}
+            name={item.name}
+            open={activeKey.includes(item.name)}
+          >
+            {item.description && <Markdown fontSize={14}>{item.description}</Markdown>}
+            <Flexbox gap={6}>
+              <SchemaSubtitle>{t('mcp.details.schema.tools.inputSchema')}</SchemaSubtitle>
+              {mode === ModeType.Docs ? (
+                <InlineTable
+                  dataSource={properties}
+                  pagination={false}
+                  rowKey={'name'}
+                  columns={[
+                    {
+                      dataIndex: 'name',
+                      render: (_, record) => (
+                        <span className={styles.code} style={{ color: cssVar.gold }}>
+                          {record.name}
+                        </span>
+                      ),
+                      title: t('mcp.details.schema.tools.table.name'),
+                    },
+                    {
+                      dataIndex: 'type',
+                      render: (_, record) => <Tag className={styles.code}>{record.type}</Tag>,
+                      title: t('mcp.details.schema.tools.table.type'),
+                    },
+                    {
+                      dataIndex: 'required',
+                      render: (_, record) => (
+                        <Icon
+                          icon={record.required ? CheckIcon : MinusIcon}
+                          color={
+                            record.required ? cssVar.colorSuccess : cssVar.colorTextDescription
+                          }
+                        />
+                      ),
+                      title: t('mcp.details.schema.tools.table.required'),
+                    },
+                    {
+                      dataIndex: 'description',
+                      title: t('mcp.details.schema.tools.table.description'),
+                    },
+                  ]}
+                />
+              ) : (
+                <Highlighter language={'json'} style={{ fontSize: 12 }} variant={'borderless'}>
+                  {JSON.stringify(item.inputSchema, null, 2)}
+                </Highlighter>
+              )}
+            </Flexbox>
+          </SchemaItem>
+        );
       })}
-      onChange={setActiveKey}
-      variant={'outlined'}
-    />
+    </SchemaList>
   );
 });
 

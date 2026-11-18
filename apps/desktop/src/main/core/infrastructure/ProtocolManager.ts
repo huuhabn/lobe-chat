@@ -4,7 +4,7 @@ import { isDev } from '@/const/env';
 import { createLogger } from '@/utils/logger';
 import { getProtocolScheme, parseProtocolUrl } from '@/utils/protocol';
 
-import { App } from '../App';
+import type { App } from '../App';
 
 // Create logger
 const logger = createLogger('core:ProtocolManager');
@@ -50,7 +50,9 @@ export class ProtocolManager {
 
     // Check if already registered
     const isCurrentlyRegistered = app.isDefaultProtocolClient(this.protocolScheme);
-    logger.debug(`🔗 [Protocol] Is currently default protocol client: ${isCurrentlyRegistered}`);
+    logger.debug(
+      `🔗 [Protocol] ${this.protocolScheme}:// is currently registered: ${isCurrentlyRegistered}`,
+    );
 
     // Register as default protocol client
     let registrationResult: boolean;
@@ -71,7 +73,9 @@ export class ProtocolManager {
       registrationResult = app.setAsDefaultProtocolClient(this.protocolScheme);
     }
 
-    logger.debug(`🔗 [Protocol] Registration result: ${registrationResult}`);
+    logger.debug(
+      `🔗 [Protocol] Registration result for ${this.protocolScheme}://: ${registrationResult}`,
+    );
 
     if (!registrationResult) {
       logger.error(
@@ -83,7 +87,9 @@ export class ProtocolManager {
 
     // Verify registration
     const isRegisteredAfter = app.isDefaultProtocolClient(this.protocolScheme);
-    logger.debug(`🔗 [Protocol] Final registration status: ${isRegisteredAfter}`);
+    logger.debug(
+      `🔗 [Protocol] Final registration status for ${this.protocolScheme}://: ${isRegisteredAfter}`,
+    );
   }
 
   /**
@@ -123,7 +129,6 @@ export class ProtocolManager {
    */
   private getProtocolUrlFromArgs(args: string[]): string | null {
     const protocolPrefix = `${this.protocolScheme}://`;
-
     logger.debug(`🔗 [Protocol] Searching for protocol URLs in args: ${JSON.stringify(args)}`);
     logger.debug(`🔗 [Protocol] Looking for prefix: ${protocolPrefix}`);
 
@@ -146,7 +151,7 @@ export class ProtocolManager {
       logger.debug(`🔗 [Protocol] App ready state: ${app.isReady()}`);
       logger.debug(`🔗 [Protocol] Current pending URLs count: ${this.pendingUrls.length}`);
 
-      if (!app.isReady()) {
+      if (!app.isReady() || this.app.startupUpdatePending) {
         // App not ready yet, store for later processing
         logger.debug('🔗 [Protocol] App not ready, storing protocol URL for later processing');
         this.pendingUrls.push(url);

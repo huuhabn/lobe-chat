@@ -1,11 +1,8 @@
-import { Text } from '@lobehub/ui';
-import { Progress } from 'antd';
-import { useTheme } from 'antd-style';
+import { cssVar, Flexbox, Progress, Text } from '@lobehub/ui';
 import isEqual from 'fast-deep-equal';
-import { motion } from 'framer-motion';
+import * as m from 'motion/react-m';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Flexbox } from 'react-layout-kit';
 
 import { useToolStore } from '@/store/tool';
 import { mcpStoreSelectors } from '@/store/tool/selectors';
@@ -14,6 +11,7 @@ import { MCPInstallStep } from '@/types/plugins';
 import InstallError from './InstallError';
 import MCPConfigForm from './MCPConfigForm';
 import MCPDependenciesGuide from './MCPDependenciesGuide';
+import { MCPOAuthAuthorization } from './MCPOAuthAuthorization';
 
 const MCPInstallProgress = memo<{ identifier: string }>(({ identifier }) => {
   const { t } = useTranslation('plugin');
@@ -22,18 +20,20 @@ const MCPInstallProgress = memo<{ identifier: string }>(({ identifier }) => {
     isEqual,
   );
 
-  const theme = useTheme();
-
   const stepText = installProgress ? t(`mcpInstall.${installProgress.step}` as any) : undefined;
   const needsConfig = installProgress?.needsConfig;
   const needsDependencies = installProgress?.step === MCPInstallStep.DEPENDENCIES_REQUIRED;
   const hasError = installProgress?.step === MCPInstallStep.ERROR;
   const errorInfo = installProgress?.errorInfo;
+  const needsAuthorization = installProgress?.step === MCPInstallStep.AUTHORIZATION_REQUIRED;
 
   return (
     <>
-      {installProgress && !hasError && !needsDependencies && (
-        <motion.div
+      {needsAuthorization && (
+        <MCPOAuthAuthorization error={errorInfo?.message} identifier={identifier} />
+      )}
+      {installProgress && !hasError && !needsDependencies && !needsAuthorization && (
+        <m.div
           animate={{ height: 'auto', opacity: 1 }}
           exit={{ height: 0, opacity: 0 }}
           initial={{ height: 0, opacity: 0 }}
@@ -49,7 +49,7 @@ const MCPInstallProgress = memo<{ identifier: string }>(({ identifier }) => {
               showInfo={false}
               size="small"
               status="active"
-              strokeColor={{ '0%': theme.blue, '100%': theme.geekblue }}
+              strokeColor={cssVar.geekblue}
             />
             {stepText && (
               <Text fontSize={11} style={{ marginTop: 4 }} type={'secondary'}>
@@ -57,11 +57,11 @@ const MCPInstallProgress = memo<{ identifier: string }>(({ identifier }) => {
               </Text>
             )}
           </Flexbox>
-        </motion.div>
+        </m.div>
       )}
 
       {hasError && errorInfo && (
-        <motion.div
+        <m.div
           animate={{ height: 'auto', opacity: 1 }}
           exit={{ height: 0, opacity: 0 }}
           initial={{ height: 0, opacity: 0 }}
@@ -74,11 +74,11 @@ const MCPInstallProgress = memo<{ identifier: string }>(({ identifier }) => {
           <Flexbox paddingBlock={8}>
             <InstallError errorInfo={errorInfo} identifier={identifier} />
           </Flexbox>
-        </motion.div>
+        </m.div>
       )}
 
       {needsDependencies && installProgress?.systemDependencies && (
-        <motion.div
+        <m.div
           animate={{ height: 'auto', opacity: 1 }}
           exit={{ height: 0, opacity: 0 }}
           initial={{ height: 0, opacity: 0 }}
@@ -94,11 +94,11 @@ const MCPInstallProgress = memo<{ identifier: string }>(({ identifier }) => {
               systemDependencies={installProgress.systemDependencies}
             />
           </Flexbox>
-        </motion.div>
+        </m.div>
       )}
 
       {needsConfig && installProgress && (
-        <motion.div
+        <m.div
           animate={{ height: 'auto', opacity: 1 }}
           exit={{ height: 0, opacity: 0 }}
           initial={{ height: 0, opacity: 0 }}
@@ -109,7 +109,7 @@ const MCPInstallProgress = memo<{ identifier: string }>(({ identifier }) => {
           }}
         >
           <MCPConfigForm configSchema={installProgress.configSchema} identifier={identifier} />
-        </motion.div>
+        </m.div>
       )}
     </>
   );

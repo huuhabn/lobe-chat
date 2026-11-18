@@ -1,13 +1,16 @@
-import { InstallPluginMeta } from '@/types/tool/plugin';
+import { type InstallPluginMeta } from '@/types/tool/plugin';
 
-import type { ToolStoreState } from '../../initialState';
+import { type ToolStoreState } from '../../initialState';
+
+/** The MCP marketplace rows of the loaded page set (empty while un-loaded). */
+const loadedPluginItems = (s: ToolStoreState) => s.mcpPluginList?.items ?? [];
 
 const mcpPluginList = (s: ToolStoreState) => {
   const installedPluginIds = new Set(s.installedPlugins.map((i) => i.identifier));
   const list =
     s.listType === 'mcp'
-      ? s.mcpPluginItems
-      : s.mcpPluginItems.filter((p) => installedPluginIds.has(p.identifier));
+      ? loadedPluginItems(s)
+      : loadedPluginItems(s).filter((p) => installedPluginIds.has(p.identifier));
 
   return list.map<InstallPluginMeta>((p) => ({
     author: p.author,
@@ -28,13 +31,12 @@ const isPluginInstallLoading = (id: string) => (s: ToolStoreState) => s.pluginIn
 
 const getMCPInstallProgress = (id: string) => (s: ToolStoreState) => s.mcpInstallProgress[id];
 
-const isMCPInstalling = (id: string) => (s: ToolStoreState) => !!s.mcpInstallProgress[id];
+const isMCPInstalling = (id: string) => (s: ToolStoreState) =>
+  !!s.mcpInstallProgress[id] && s.mcpInstallProgress[id].step !== 'Error';
 
 const getPluginById = (id: string) => (s: ToolStoreState) => {
-  return s.mcpPluginItems.find((i) => i.identifier === id);
+  return loadedPluginItems(s).find((i) => i.identifier === id);
 };
-
-const activeMCPPluginIdentifier = (s: ToolStoreState) => s.activeMCPIdentifier;
 
 const getMCPPluginRequiringConfig = (id: string) => (s: ToolStoreState) =>
   s.mcpInstallProgress[id]?.configSchema;
@@ -42,14 +44,14 @@ const getMCPPluginRequiringConfig = (id: string) => (s: ToolStoreState) =>
 const isMCPPluginRequiringConfig = (id: string) => (s: ToolStoreState) =>
   !!s.mcpInstallProgress[id]?.configSchema;
 
-// 检查插件是否正在安装中（有安装进度且不是配置阶段）
+// Check if plugin is installing (has install progress and not in config stage)
 const isMCPInstallInProgress = (id: string) => (s: ToolStoreState) => {
   const progress = s.mcpInstallProgress[id];
 
   return !!progress && !progress.needsConfig && progress.step !== 'Error';
 };
 
-// 测试连接相关选择器
+// Test connection related selectors
 const isMCPConnectionTesting = (id: string) => (s: ToolStoreState) => s.mcpTestLoading[id] || false;
 
 const getMCPConnectionTestError = (id: string) => (s: ToolStoreState) => s.mcpTestErrors[id];
@@ -60,7 +62,6 @@ const getMCPConnectionTestState = (id: string) => (s: ToolStoreState) => ({
 });
 
 export const mcpStoreSelectors = {
-  activeMCPPluginIdentifier,
   getMCPConnectionTestError,
   getMCPConnectionTestState,
   getMCPInstallProgress,

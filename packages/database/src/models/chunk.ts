@@ -1,55 +1,74 @@
+import type { ChunkMetadata, FileChunk } from '@lobechat/types';
 import { and, asc, cosineDistance, count, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { chunk } from 'lodash-es';
+import { chunk } from 'es-toolkit/compat';
 
-import { LobeChatDatabase } from '../type';
-import { ChunkMetadata, FileChunk } from '@/types/chunk';
-
-import {
-  NewChunkItem,
-  NewUnstructuredChunkItem,
-  chunks,
-  embeddings,
-  fileChunks,
-  files,
-  unstructuredChunks,
-} from '../schemas';
+import type { NewChunkItem, NewUnstructuredChunkItem } from '../schemas';
+import { chunks, embeddings, fileChunks, files, unstructuredChunks } from '../schemas';
+import type { LobeChatDatabase } from '../type';
+import { insertInBatches } from '../utils/batchInsert';
+import { buildWorkspacePayload, buildWorkspaceWhere } from '../utils/workspace';
 
 export class ChunkModel {
   private userId: string;
 
   private db: LobeChatDatabase;
+  private workspaceId?: string;
 
-  constructor(db: LobeChatDatabase, userId: string) {
+  constructor(db: LobeChatDatabase, userId: string, workspaceId?: string) {
     this.userId = userId;
     this.db = db;
+    this.workspaceId = workspaceId;
   }
+
+  private ownership = () =>
+    buildWorkspaceWhere({ userId: this.userId, workspaceId: this.workspaceId }, chunks);
+
+  private fileChunksOwnership = () =>
+    buildWorkspaceWhere({ userId: this.userId, workspaceId: this.workspaceId }, fileChunks);
 
   bulkCreate = async (params: NewChunkItem[], fileId: string) => {
     return this.db.transaction(async (trx) => {
       if (params.length === 0) return [];
 
-      const result = await trx.insert(chunks).values(params).returning();
+      // One statement per INSERT_BATCH_SIZE rows, all inside this transaction: a spreadsheet of
+      // tens of thousands of rows would otherwise exceed PG's 65,535 bind parameters, and
+      // Drizzle's query builder overflows the call stack on that many rows before it gets there.
+      const result: (typeof chunks.$inferSelect)[] = [];
+      await insertInBatches(params, async (batch) => {
+        const created = await trx
+          .insert(chunks)
+          .values(
+            batch.map((p) =>
+              buildWorkspacePayload({ userId: this.userId, workspaceId: this.workspaceId }, p),
+            ),
+          )
+          .returning();
+        result.push(...created);
+      });
 
       const fileChunksData = result.map((chunk) => ({
         chunkId: chunk.id,
         fileId,
         userId: this.userId,
+        workspaceId: this.workspaceId ?? null,
       }));
 
-      if (fileChunksData.length > 0) {
-        await trx.insert(fileChunks).values(fileChunksData);
-      }
+      await insertInBatches(fileChunksData, (batch) => trx.insert(fileChunks).values(batch));
 
       return result;
     });
   };
 
   bulkCreateUnstructuredChunks = async (params: NewUnstructuredChunkItem[]) => {
-    return this.db.insert(unstructuredChunks).values(params);
+    return this.db
+      .insert(unstructuredChunks)
+      .values(
+        params.map((p) => ({ ...p, workspaceId: p.workspaceId ?? this.workspaceId ?? null })),
+      );
   };
 
   delete = async (id: string) => {
-    return this.db.delete(chunks).where(and(eq(chunks.id, id), eq(chunks.userId, this.userId)));
+    return this.db.delete(chunks).where(and(eq(chunks.id, id), this.ownership()));
   };
 
   deleteOrphanChunks = async () => {
@@ -75,7 +94,7 @@ export class ChunkModel {
 
   findById = async (id: string) => {
     return this.db.query.chunks.findFirst({
-      where: and(eq(chunks.id, id)),
+      where: and(eq(chunks.id, id), this.ownership()),
     });
   };
 
@@ -93,7 +112,7 @@ export class ChunkModel {
       })
       .from(chunks)
       .innerJoin(fileChunks, eq(chunks.id, fileChunks.chunkId))
-      .where(and(eq(fileChunks.fileId, id), eq(chunks.userId, this.userId)))
+      .where(and(eq(fileChunks.fileId, id), this.ownership(), this.fileChunksOwnership()))
       .limit(20)
       .offset(page * 20)
       .orderBy(asc(chunks.index));
@@ -110,7 +129,7 @@ export class ChunkModel {
       .select()
       .from(chunks)
       .innerJoin(fileChunks, eq(chunks.id, fileChunks.chunkId))
-      .where(eq(fileChunks.fileId, id));
+      .where(and(eq(fileChunks.fileId, id), this.ownership(), this.fileChunksOwnership()));
 
     return data
       .map((item) => item.chunks)
@@ -127,7 +146,7 @@ export class ChunkModel {
         id: fileChunks.fileId,
       })
       .from(fileChunks)
-      .where(inArray(fileChunks.fileId, ids))
+      .where(and(inArray(fileChunks.fileId, ids), this.fileChunksOwnership()))
       .groupBy(fileChunks.fileId);
   };
 
@@ -138,7 +157,7 @@ export class ChunkModel {
         id: fileChunks.fileId,
       })
       .from(fileChunks)
-      .where(eq(fileChunks.fileId, ids))
+      .where(and(eq(fileChunks.fileId, ids), this.fileChunksOwnership()))
       .groupBy(fileChunks.fileId);
 
     return data[0]?.count ?? 0;
@@ -169,7 +188,13 @@ export class ChunkModel {
       .leftJoin(embeddings, eq(chunks.id, embeddings.chunkId))
       .leftJoin(fileChunks, eq(chunks.id, fileChunks.chunkId))
       .leftJoin(files, eq(fileChunks.fileId, files.id))
-      .where(fileIds ? inArray(fileChunks.fileId, fileIds) : undefined)
+      .where(
+        and(
+          this.ownership(),
+          fileIds ? this.fileChunksOwnership() : undefined,
+          fileIds ? inArray(fileChunks.fileId, fileIds) : undefined,
+        ),
+      )
       .orderBy((t) => desc(t.similarity))
       .limit(30);
 
@@ -182,10 +207,12 @@ export class ChunkModel {
   semanticSearchForChat = async ({
     embedding,
     fileIds,
+    topK = 15,
   }: {
     embedding: number[];
     fileIds: string[] | undefined;
     query: string;
+    topK?: number;
   }) => {
     const similarity = sql<number>`1 - (${cosineDistance(embeddings.embeddings, embedding)})`;
 
@@ -208,10 +235,10 @@ export class ChunkModel {
       .leftJoin(embeddings, eq(chunks.id, embeddings.chunkId))
       .leftJoin(fileChunks, eq(chunks.id, fileChunks.chunkId))
       .leftJoin(files, eq(files.id, fileChunks.fileId))
-      .where(inArray(fileChunks.fileId, fileIds))
+      .where(and(inArray(fileChunks.fileId, fileIds), this.ownership(), this.fileChunksOwnership()))
       .orderBy((t) => desc(t.similarity))
-      // 先放宽到 15
-      .limit(15);
+      // Relaxed to 15 for now
+      .limit(topK);
 
     return result.map((item) => {
       return {

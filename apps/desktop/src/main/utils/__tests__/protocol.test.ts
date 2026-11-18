@@ -1,7 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { McpSchema } from '../../types/protocol';
-import { generateRFCProtocolUrl, parseProtocolUrl } from '../protocol';
+import type { McpSchema } from '../../types/protocol';
+import { generateRFCProtocolUrl, getProtocolScheme, parseProtocolUrl } from '../protocol';
+
+const desktopEnv = vi.hoisted(() => ({
+  DESKTOP_PROTOCOL_SCHEME: undefined as string | undefined,
+}));
+
+vi.mock('@/env', () => ({ getDesktopEnv: () => desktopEnv }));
+
+afterEach(() => {
+  desktopEnv.DESKTOP_PROTOCOL_SCHEME = undefined;
+});
 
 describe('Protocol', () => {
   describe('generateRFCProtocolUrl', () => {
@@ -35,8 +45,8 @@ describe('Protocol', () => {
       const urlObj = new URL(url);
       const schemaParam = urlObj.searchParams.get('schema');
       expect(schemaParam).toBeTruthy();
-      // URLSearchParams.get() 自动解码，所以这里得到的是解码后的JSON
-      expect(schemaParam).toContain('"'); // 解码后的引号
+      // URLSearchParams.get() auto-decodes, so we get the decoded JSON here
+      expect(schemaParam).toContain('"'); // decoded quotes
     });
 
     it('should generate valid RFC protocol URL for http type', () => {
@@ -114,7 +124,7 @@ describe('Protocol', () => {
       expect(parsed?.params.marketId).toBe('lobehub');
       expect(parsed?.originalUrl).toBe(url);
 
-      // 验证 schema 可以被解析
+      // Verify that the schema can be parsed
       const parsedSchema = JSON.parse(parsed?.params.schema || '{}');
       expect(parsedSchema).toEqual(schema);
     });
@@ -177,7 +187,7 @@ describe('Protocol', () => {
       expect(parsed?.params.id).toBe('special-chars');
       expect(parsed?.params.type).toBe('mcp');
 
-      // 验证 schema 可以正确解析
+      // Verify that the schema can be parsed correctly
       const parsedSchema = JSON.parse(parsed?.params.schema || '{}');
       expect(parsedSchema).toEqual(schema);
     });
@@ -198,6 +208,37 @@ describe('Protocol', () => {
         expect(parsed?.params.test).toBe('value');
         expect(parsed?.originalUrl).toBe(url);
       });
+    });
+  });
+
+  describe('distribution scheme override', () => {
+    it('uses the configured scheme instead of the channel heuristics', () => {
+      desktopEnv.DESKTOP_PROTOCOL_SCHEME = 'acme';
+
+      expect(getProtocolScheme()).toBe('acme');
+    });
+
+    it('accepts deep links on the configured scheme', () => {
+      desktopEnv.DESKTOP_PROTOCOL_SCHEME = 'acme';
+
+      expect(parseProtocolUrl('acme://plugin/install?id=figma')).toMatchObject({
+        action: 'install',
+        urlType: 'plugin',
+      });
+    });
+
+    it('matches a mixed-case override against the lowercased scheme URL parsing yields', () => {
+      desktopEnv.DESKTOP_PROTOCOL_SCHEME = 'Acme';
+
+      expect(getProtocolScheme()).toBe('acme');
+      expect(parseProtocolUrl('Acme://plugin/install?id=figma')).toMatchObject({
+        action: 'install',
+        urlType: 'plugin',
+      });
+    });
+
+    it('still rejects schemes that are neither upstream nor configured', () => {
+      expect(parseProtocolUrl('acme://plugin/install?id=figma')).toBeNull();
     });
   });
 });

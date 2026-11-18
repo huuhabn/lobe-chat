@@ -1,23 +1,32 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import type { ImporterEntryData } from '@lobechat/types';
+import { and, inArray, sql } from 'drizzle-orm';
 
-import { ImportResult } from '@/services/import/_deprecated';
-import { ImporterEntryData } from '@/types/importer';
+import { clampToolIdentifier } from '@/utils/clampToolIdentifier';
 import { sanitizeUTF8 } from '@/utils/sanitizeUTF8';
 
 import {
   agents,
   agentsToSessions,
   messagePlugins,
-  messageTranslates,
   messages,
+  messageTranslates,
   sessionGroups,
   sessions,
   topics,
 } from '../../../schemas';
-import { LobeChatDatabase } from '../../../type';
+import type { LobeChatDatabase } from '../../../type';
+import { buildWorkspaceWhere } from '../../../utils/workspace';
+
+interface ImportResult {
+  added: number;
+  errors: number;
+  skips: number;
+  updated?: number;
+}
 
 export class DeprecatedDataImporterRepos {
   private userId: string;
+  private workspaceId?: string;
   private db: LobeChatDatabase;
 
   /**
@@ -25,18 +34,31 @@ export class DeprecatedDataImporterRepos {
    */
   supportVersion = 7;
 
-  constructor(db: LobeChatDatabase, userId: string) {
+  constructor(db: LobeChatDatabase, userId: string, workspaceId?: string) {
     this.userId = userId;
+    this.workspaceId = workspaceId;
     this.db = db;
+  }
+
+  /**
+   * Import identity/mapping probes must include trashed rows: clientId unique
+   * indexes still cover them, so hiding them would turn a retry into a
+   * conflicting insert. This repository exposes no ordinary product reads.
+   */
+  private workspaceWhere(table: { userId: any; workspaceId: any }) {
+    return buildWorkspaceWhere(
+      { includeTrashed: true, userId: this.userId, workspaceId: this.workspaceId },
+      table,
+    );
   }
 
   importData = async (data: ImporterEntryData) => {
     if (data.version > this.supportVersion) throw new Error('Unsupported version');
 
-    let sessionGroupResult: ImportResult = { added: 0, errors: 0, skips: 0 };
-    let sessionResult: ImportResult = { added: 0, errors: 0, skips: 0 };
-    let topicResult: ImportResult = { added: 0, errors: 0, skips: 0 };
-    let messageResult: ImportResult = { added: 0, errors: 0, skips: 0 };
+    const sessionGroupResult: ImportResult = { added: 0, errors: 0, skips: 0 };
+    const sessionResult: ImportResult = { added: 0, errors: 0, skips: 0 };
+    const topicResult: ImportResult = { added: 0, errors: 0, skips: 0 };
+    const messageResult: ImportResult = { added: 0, errors: 0, skips: 0 };
 
     let sessionGroupIdMap: Record<string, string> = {};
     let sessionIdMap: Record<string, string> = {};
@@ -47,7 +69,7 @@ export class DeprecatedDataImporterRepos {
       if (data.sessionGroups && data.sessionGroups.length > 0) {
         const query = await trx.query.sessionGroups.findMany({
           where: and(
-            eq(sessionGroups.userId, this.userId),
+            this.workspaceWhere(sessionGroups),
             inArray(
               sessionGroups.clientId,
               data.sessionGroups.map(({ id }) => id),
@@ -66,6 +88,7 @@ export class DeprecatedDataImporterRepos {
               createdAt: new Date(createdAt),
               updatedAt: new Date(updatedAt),
               userId: this.userId,
+              workspaceId: this.workspaceId ?? null,
             })),
           )
           .onConflictDoUpdate({
@@ -83,7 +106,7 @@ export class DeprecatedDataImporterRepos {
       if (data.sessions && data.sessions.length > 0) {
         const query = await trx.query.sessions.findMany({
           where: and(
-            eq(sessions.userId, this.userId),
+            this.workspaceWhere(sessions),
             inArray(
               sessions.clientId,
               data.sessions.map(({ id }) => id),
@@ -103,6 +126,7 @@ export class DeprecatedDataImporterRepos {
               groupId: group ? sessionGroupIdMap[group] : null,
               updatedAt: new Date(updatedAt),
               userId: this.userId,
+              workspaceId: this.workspaceId ?? null,
             })),
           )
           .onConflictDoUpdate({
@@ -121,15 +145,24 @@ export class DeprecatedDataImporterRepos {
           // filter out existing session, only insert new ones
           .filter((s) => query.every((q) => q.clientId !== s.id));
 
-        // 只有当需要有新的 session 时，才会插入 agent
+        // Only insert agent when new sessions are needed
         if (shouldInsertSessionAgents.length > 0) {
           const agentMapArray = await trx
             .insert(agents)
             .values(
               shouldInsertSessionAgents.map(({ config, meta }) => ({
                 ...config,
+                // `config` is the `@lobechat/types` LobeAgentConfig shape
+                // (plugins: AgentPluginEntry[]); the `agents` table's
+                // `plugins` column is intentionally left typed `string[]`
+                // (only the domain types are widened for the tri-state
+                // rollout, not the JSONB column's compile-time annotation).
+                // Legacy import payloads only ever contain bare strings
+                // anyway.
+                plugins: config.plugins as unknown as string[] | undefined,
                 ...meta,
                 userId: this.userId,
+                workspaceId: this.workspaceId ?? null,
               })),
             )
             .returning({ id: agents.id });
@@ -139,6 +172,7 @@ export class DeprecatedDataImporterRepos {
               agentId: agentMapArray[index].id,
               sessionId: sessionIdMap[id],
               userId: this.userId,
+              workspaceId: this.workspaceId ?? null,
             })),
           );
         }
@@ -148,7 +182,7 @@ export class DeprecatedDataImporterRepos {
       if (data.topics && data.topics.length > 0) {
         const skipQuery = await trx.query.topics.findMany({
           where: and(
-            eq(topics.userId, this.userId),
+            this.workspaceWhere(topics),
             inArray(
               topics.clientId,
               data.topics.map(({ id }) => id),
@@ -168,6 +202,7 @@ export class DeprecatedDataImporterRepos {
               sessionId: sessionId ? sessionIdMap[sessionId] : null,
               updatedAt: new Date(updatedAt),
               userId: this.userId,
+              workspaceId: this.workspaceId ?? null,
             })),
           )
           .onConflictDoUpdate({
@@ -184,17 +219,15 @@ export class DeprecatedDataImporterRepos {
       // import messages
       if (data.messages && data.messages.length > 0) {
         // 1. find skip ones
-        console.time('find messages');
         const skipQuery = await trx.query.messages.findMany({
           where: and(
-            eq(messages.userId, this.userId),
+            this.workspaceWhere(messages),
             inArray(
               messages.clientId,
               data.messages.map(({ id }) => id),
             ),
           ),
         });
-        console.timeEnd('find messages');
 
         messageResult.skips = skipQuery.length;
 
@@ -215,28 +248,26 @@ export class DeprecatedDataImporterRepos {
               parentId: null,
               provider: extra?.fromProvider,
               sessionId: sessionId ? sessionIdMap[sessionId] : null,
-              topicId: topicId ? topicIdMap[topicId] : null, // 暂时设为 NULL
+              topicId: topicId ? topicIdMap[topicId] : null, // Temporarily set to NULL
               updatedAt: new Date(updatedAt),
               userId: this.userId,
+              workspaceId: this.workspaceId ?? null,
             }),
           );
 
-          console.time('insert messages');
-          const BATCH_SIZE = 100; // 每批次插入的记录数
+          const BATCH_SIZE = 100; // Number of records to insert per batch
 
           for (let i = 0; i < inertValues.length; i += BATCH_SIZE) {
             const batch = inertValues.slice(i, i + BATCH_SIZE);
             await trx.insert(messages).values(batch);
           }
 
-          console.timeEnd('insert messages');
-
           const messageIdArray = await trx
             .select({ clientId: messages.clientId, id: messages.id })
             .from(messages)
             .where(
               and(
-                eq(messages.userId, this.userId),
+                this.workspaceWhere(messages),
                 inArray(
                   messages.clientId,
                   data.messages.map(({ id }) => id),
@@ -249,9 +280,8 @@ export class DeprecatedDataImporterRepos {
           );
 
           // 3. update parentId for messages
-          console.time('execute updates parentId');
           const parentIdUpdates = shouldInsertMessages
-            .filter((msg) => msg.parentId) // 只处理有 parentId 的消息
+            .filter((msg) => msg.parentId) // Only process messages with parentId
             .map((msg) => {
               if (messageIdMap[msg.parentId as string])
                 return sql`WHEN ${messages.clientId} = ${msg.id} THEN ${messageIdMap[msg.parentId as string]} `;
@@ -278,21 +308,21 @@ export class DeprecatedDataImporterRepos {
             // console.log('sql:', SQL.sql);
             // console.log('params:', SQL.params);
           }
-          console.timeEnd('execute updates parentId');
 
           // 4. insert message plugins
           const pluginInserts = shouldInsertMessages.filter((msg) => msg.plugin);
           if (pluginInserts.length > 0) {
             await trx.insert(messagePlugins).values(
               pluginInserts.map((msg) => ({
-                apiName: msg.plugin?.apiName,
+                apiName: clampToolIdentifier(msg.plugin?.apiName),
                 arguments: msg.plugin?.arguments,
                 id: messageIdMap[msg.id],
-                identifier: msg.plugin?.identifier,
+                identifier: clampToolIdentifier(msg.plugin?.identifier),
                 state: msg.pluginState,
                 toolCallId: msg.tool_call_id,
                 type: msg.plugin?.type,
                 userId: this.userId,
+                workspaceId: this.workspaceId ?? null,
               })),
             );
           }
@@ -305,11 +335,12 @@ export class DeprecatedDataImporterRepos {
                 id: messageIdMap[msg.id],
                 ...msg.extra?.translate,
                 userId: this.userId,
+                workspaceId: this.workspaceId ?? null,
               })),
             );
           }
 
-          // TODO: 未来需要处理 TTS 和图片的插入 （目前存在 file 的部分，不方便处理）
+          // TODO: Need to handle TTS and image insertion in the future (currently difficult to handle due to file-related parts)
         }
 
         messageResult.added = shouldInsertMessages.length;

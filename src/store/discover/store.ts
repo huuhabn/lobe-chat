@@ -1,33 +1,84 @@
 import { shallow } from 'zustand/shallow';
 import { createWithEqualityFn } from 'zustand/traditional';
-import { StateCreator } from 'zustand/vanilla';
+import { type StateCreator } from 'zustand/vanilla';
 
 import { createDevtools } from '../middleware/createDevtools';
-import { AssistantAction, createAssistantSlice } from './slices/assistant/action';
-import { MCPAction, createMCPSlice } from './slices/mcp';
-import { ModelAction, createModelSlice } from './slices/model/action';
-import { PluginAction, createPluginSlice } from './slices/plugin/action';
-import { ProviderAction, createProviderSlice } from './slices/provider/action';
+import { expose } from '../middleware/expose';
+import { flattenActions } from '../utils/flattenActions';
+import { type ResetableStore, ResetableStoreAction } from '../utils/resetableStore';
+import { type DiscoverStoreState, initialState } from './initialState';
+import { type AssistantAction } from './slices/assistant/action';
+import { createAssistantSlice } from './slices/assistant/action';
+import { type GroupAgentAction } from './slices/groupAgent/action';
+import { createGroupAgentSlice } from './slices/groupAgent/action';
+import { type MarketAction } from './slices/market';
+import { createMarketSlice } from './slices/market';
+import { type MCPAction } from './slices/mcp';
+import { createMCPSlice } from './slices/mcp';
+import { type ModelAction } from './slices/model/action';
+import { createModelSlice } from './slices/model/action';
+import { type PluginAction } from './slices/plugin/action';
+import { createPluginSlice } from './slices/plugin/action';
+import { type ProviderAction } from './slices/provider/action';
+import { createProviderSlice } from './slices/provider/action';
+import { type SkillAction } from './slices/skill';
+import { createSkillSlice } from './slices/skill';
+import { type SocialAction } from './slices/social';
+import { createSocialSlice } from './slices/social';
+import { type UserAction } from './slices/user';
+import { createUserSlice } from './slices/user';
 
-//  ===============  聚合 createStoreFn ============ //
+//  ===============  Aggregate createStoreFn ============ //
 
 export type DiscoverStore = MCPAction &
+  MarketAction &
   AssistantAction &
+  GroupAgentAction &
   ProviderAction &
   ModelAction &
-  PluginAction;
+  PluginAction &
+  SkillAction &
+  SocialAction &
+  UserAction &
+  ResetableStore &
+  DiscoverStoreState;
+
+type DiscoverStoreAction = MCPAction &
+  MarketAction &
+  AssistantAction &
+  GroupAgentAction &
+  ProviderAction &
+  ModelAction &
+  PluginAction &
+  SkillAction &
+  SocialAction &
+  UserAction &
+  ResetableStore;
+
+class DiscoverStoreResetAction extends ResetableStoreAction<DiscoverStore> {
+  protected readonly resetActionName = 'resetDiscoverStore';
+}
 
 const createStore: StateCreator<DiscoverStore, [['zustand/devtools', never]]> = (
-  ...parameters
+  ...parameters: Parameters<StateCreator<DiscoverStore, [['zustand/devtools', never]]>>
 ) => ({
-  ...createMCPSlice(...parameters),
-  ...createAssistantSlice(...parameters),
-  ...createProviderSlice(...parameters),
-  ...createModelSlice(...parameters),
-  ...createPluginSlice(...parameters),
+  ...initialState,
+  ...flattenActions<DiscoverStoreAction>([
+    createMCPSlice(...parameters),
+    createMarketSlice(...parameters),
+    createAssistantSlice(...parameters),
+    createGroupAgentSlice(...parameters),
+    createProviderSlice(...parameters),
+    createModelSlice(...parameters),
+    createPluginSlice(...parameters),
+    createSkillSlice(...parameters),
+    createSocialSlice(...parameters),
+    createUserSlice(...parameters),
+    new DiscoverStoreResetAction(...parameters),
+  ]),
 });
 
-//  ===============  实装 useStore ============ //
+//  ===============  Implement useStore ============ //
 
 const devtools = createDevtools('discover');
 
@@ -35,5 +86,7 @@ export const useDiscoverStore = createWithEqualityFn<DiscoverStore>()(
   devtools(createStore),
   shallow,
 );
+
+expose('discover', useDiscoverStore);
 
 export const getDiscoverStoreState = () => useDiscoverStore.getState();

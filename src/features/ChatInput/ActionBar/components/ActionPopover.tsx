@@ -1,27 +1,16 @@
 'use client';
 
-import { Popover, PopoverProps } from 'antd';
-import { createStyles } from 'antd-style';
-import { ReactNode, memo } from 'react';
-import { Flexbox } from 'react-layout-kit';
+import { type PopoverProps } from '@lobehub/ui';
+import { Flexbox, Popover, Spin } from '@lobehub/ui';
+import { cssVar } from '@lobehub/ui/stylex/cssVar.stylex';
+import { type ReactNode } from 'react';
+import { memo, Suspense } from 'react';
 
-import UpdateLoading from '@/components/Loading/UpdateLoading';
+import DebugNode from '@/components/DebugNode';
 import { useIsMobile } from '@/hooks/useIsMobile';
 
-const useStyles = createStyles(({ css, prefixCls }) => ({
-  popoverContent: css`
-    .${prefixCls}-form {
-      .${prefixCls}-form-item:first-child {
-        padding-block: 0 4px;
-      }
-      .${prefixCls}-form-item:last-child {
-        padding-block: 4px 0;
-      }
-    }
-  `,
-}));
-
-export interface ActionPopoverProps extends Omit<PopoverProps, 'title' | 'content'> {
+export interface ActionPopoverProps extends Omit<PopoverProps, 'title' | 'content' | 'children'> {
+  children?: ReactNode;
   content?: ReactNode;
   extra?: ReactNode;
   loading?: boolean;
@@ -38,42 +27,61 @@ const ActionPopover = memo<ActionPopoverProps>(
     maxWidth,
     minWidth,
     children,
-    classNames,
+    classNames: customClassNames,
     title,
     placement,
     loading,
     extra,
+    content,
     ...rest
   }) => {
-    const { cx, styles, theme } = useStyles();
     const isMobile = useIsMobile();
+
+    // Properly handle classNames (can be object or function)
+    const resolvedClassNames =
+      typeof customClassNames === 'function' ? customClassNames : customClassNames;
+    const contentClassName =
+      typeof resolvedClassNames === 'object' ? resolvedClassNames?.content : undefined;
+
+    // Properly handle styles (can be object or function)
+    const resolvedStyles = typeof customStyles === 'function' ? customStyles : customStyles;
+    const contentStyle =
+      typeof resolvedStyles === 'object' && resolvedStyles?.content ? resolvedStyles.content : {};
+
+    // Compose content with optional title
+    const popoverContent = (
+      <Suspense fallback={<DebugNode trace="ActionPopover > content" />}>
+        <>
+          {title && (
+            <Flexbox horizontal gap={8} justify={'space-between'} style={{ marginBottom: 16 }}>
+              {title}
+              {extra}
+              {loading && <Spin size="small" style={{ color: cssVar.colorTextSecondary }} />}
+            </Flexbox>
+          )}
+          {content}
+        </>
+      </Suspense>
+    );
+
     return (
       <Popover
-        arrow={false}
-        classNames={{
-          ...classNames,
-          body: cx(styles.popoverContent, classNames?.body),
-        }}
+        content={popoverContent}
         placement={isMobile ? 'top' : placement}
+        classNames={{
+          ...(typeof resolvedClassNames === 'object' ? resolvedClassNames : {}),
+          content: contentClassName,
+        }}
         styles={{
-          ...customStyles,
-          body: {
+          ...(typeof resolvedStyles === 'object' ? resolvedStyles : {}),
+          content: {
             maxHeight,
             maxWidth: isMobile ? undefined : maxWidth,
             minWidth: isMobile ? undefined : minWidth,
             width: isMobile ? '100vw' : undefined,
-            ...customStyles?.body,
+            ...contentStyle,
           },
         }}
-        title={
-          title && (
-            <Flexbox gap={8} horizontal justify={'space-between'} style={{ marginBottom: 16 }}>
-              {title}
-              {extra}
-              {loading && <UpdateLoading style={{ color: theme.colorTextSecondary }} />}
-            </Flexbox>
-          )
-        }
         {...rest}
       >
         {children}

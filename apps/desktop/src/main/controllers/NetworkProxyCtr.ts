@@ -1,30 +1,26 @@
-import { NetworkProxySettings } from '@lobechat/electron-client-ipc';
-import { merge } from 'lodash';
-import { isEqual } from 'lodash-es';
+import type { NetworkProxySettings } from '@lobechat/electron-client-ipc';
+import { isEqual, merge } from 'es-toolkit/compat';
 
 import { defaultProxySettings } from '@/const/store';
 import { createLogger } from '@/utils/logger';
 
-import {
-  ProxyConfigValidator,
-  ProxyConnectionTester,
-  ProxyDispatcherManager,
-  ProxyTestResult,
-} from '../modules/networkProxy';
-import { ControllerModule, ipcClientEvent } from './index';
+import type { ProxyTestResult } from '../modules/networkProxy/tester';
+import { ProxyConfigValidator } from '../modules/networkProxy/validator';
+import { ControllerModule, IpcMethod } from './index';
 
 // Create logger
 const logger = createLogger('controllers:NetworkProxyCtr');
 
 /**
- * 网络代理控制器
- * 处理桌面应用的网络代理相关功能
+ * Network proxy controller
+ * Handle desktop application network proxy related functions
  */
 export default class NetworkProxyCtr extends ControllerModule {
+  static override readonly groupName = 'networkProxy';
   /**
-   * 获取代理设置
+   * Get proxy settings
    */
-  @ipcClientEvent('getProxySettings')
+  @IpcMethod()
   async getDesktopSettings(): Promise<NetworkProxySettings> {
     try {
       const settings = this.app.storeManager.get(
@@ -43,38 +39,37 @@ export default class NetworkProxyCtr extends ControllerModule {
   }
 
   /**
-   * 设置代理配置
+   * Set proxy configuration
    */
-  @ipcClientEvent('setProxySettings')
-  async setProxySettings(config: NetworkProxySettings): Promise<void> {
+  @IpcMethod()
+  async setProxySettings(config: Partial<NetworkProxySettings>): Promise<void> {
     try {
-      // 验证配置
-      const validation = ProxyConfigValidator.validate(config);
+      // Get current configuration
+      const currentConfig = this.app.storeManager.get(
+        'networkProxy',
+        defaultProxySettings,
+      ) as NetworkProxySettings;
+
+      // Merge configuration and validate
+      const newConfig = merge({}, currentConfig, config);
+
+      const validation = ProxyConfigValidator.validate(newConfig);
       if (!validation.isValid) {
         const errorMessage = `Invalid proxy configuration: ${validation.errors.join(', ')}`;
         logger.error(errorMessage);
         throw new Error(errorMessage);
       }
 
-      // 获取当前配置
-      const currentConfig = this.app.storeManager.get(
-        'networkProxy',
-        defaultProxySettings,
-      ) as NetworkProxySettings;
-
-      // 检查是否有变化
-      if (isEqual(currentConfig, config)) {
+      if (isEqual(currentConfig, newConfig)) {
         logger.debug('Proxy settings unchanged, skipping update');
         return;
       }
 
-      // 合并配置
-      const newConfig = merge({}, currentConfig, config);
-
-      // 应用代理设置
+      // Apply proxy settings
+      const { ProxyDispatcherManager } = await import('../modules/networkProxy/dispatcher');
       await ProxyDispatcherManager.applyProxySettings(newConfig);
 
-      // 保存到存储
+      // Save to storage
       this.app.storeManager.set('networkProxy', newConfig);
 
       logger.info('Proxy settings updated successfully', {
@@ -90,11 +85,12 @@ export default class NetworkProxyCtr extends ControllerModule {
   }
 
   /**
-   * 测试代理连接
+   * Test proxy connection
    */
-  @ipcClientEvent('testProxyConnection')
+  @IpcMethod()
   async testProxyConnection(url: string): Promise<{ message?: string; success: boolean }> {
     try {
+      const { ProxyConnectionTester } = await import('../modules/networkProxy/tester');
       const result = await ProxyConnectionTester.testConnection(url);
 
       if (result.success) {
@@ -105,14 +101,14 @@ export default class NetworkProxyCtr extends ControllerModule {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       logger.error('Proxy connection test failed:', errorMessage);
-      throw new Error(`Connection failed: ${errorMessage}`);
+      throw new Error(`Connection failed: ${errorMessage}`, { cause: error });
     }
   }
 
   /**
-   * 测试指定代理配置
+   * Test specified proxy configuration
    */
-  @ipcClientEvent('testProxyConfig')
+  @IpcMethod()
   async testProxyConfig({
     config,
     testUrl,
@@ -121,6 +117,7 @@ export default class NetworkProxyCtr extends ControllerModule {
     testUrl?: string;
   }): Promise<ProxyTestResult> {
     try {
+      const { ProxyConnectionTester } = await import('../modules/networkProxy/tester');
       return await ProxyConnectionTester.testProxyConfig(config, testUrl);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -133,25 +130,37 @@ export default class NetworkProxyCtr extends ControllerModule {
   }
 
   /**
-   * 应用初始代理设置
+   * Apply initial proxy settings
    */
   async beforeAppReady(): Promise<void> {
     try {
-      // 获取存储的代理设置
+      // Get stored proxy settings
       const networkProxy = this.app.storeManager.get(
         'networkProxy',
         defaultProxySettings,
       ) as NetworkProxySettings;
 
-      // 验证配置
+      // Validate configuration
       const validation = ProxyConfigValidator.validate(networkProxy);
       if (!validation.isValid) {
         logger.warn('Invalid stored proxy configuration, using defaults:', validation.errors);
+        const { ProxyDispatcherManager } = await import('../modules/networkProxy/dispatcher');
         await ProxyDispatcherManager.applyProxySettings(defaultProxySettings);
         return;
       }
 
-      // 应用代理设置
+      // A fresh Electron process already uses direct connections. Avoid loading
+      // the full undici proxy implementation on the default startup path.
+      if (!networkProxy.enableProxy) {
+        logger.info('Initial proxy settings applied successfully', {
+          enableProxy: false,
+          proxyType: networkProxy.proxyType,
+        });
+        return;
+      }
+
+      // Apply proxy settings
+      const { ProxyDispatcherManager } = await import('../modules/networkProxy/dispatcher');
       await ProxyDispatcherManager.applyProxySettings(networkProxy);
 
       logger.info('Initial proxy settings applied successfully', {
@@ -160,8 +169,9 @@ export default class NetworkProxyCtr extends ControllerModule {
       });
     } catch (error) {
       logger.error('Failed to apply initial proxy settings:', error);
-      // 出错时使用默认设置
+      // Use default settings on error
       try {
+        const { ProxyDispatcherManager } = await import('../modules/networkProxy/dispatcher');
         await ProxyDispatcherManager.applyProxySettings(defaultProxySettings);
         logger.info('Fallback to default proxy settings');
       } catch (fallbackError) {

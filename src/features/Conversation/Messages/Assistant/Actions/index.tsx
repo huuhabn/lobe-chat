@@ -1,197 +1,93 @@
-import { ActionIconGroup, type ActionIconGroupEvent, ActionIconGroupItemType } from '@lobehub/ui';
-import { App } from 'antd';
-import { useSearchParams } from 'next/navigation';
-import { memo, use, useCallback, useContext, useMemo, useState } from 'react';
-import { useTranslation } from 'react-i18next';
+import { LOADING_FLAT } from '@lobechat/const';
+import { type UIChatMessage } from '@lobechat/types';
+import { memo, useMemo } from 'react';
 
-import ShareMessageModal from '@/features/Conversation/components/ShareMessageModal';
-import { VirtuosoContext } from '@/features/Conversation/components/VirtualizedList/VirtuosoContext';
-import { useChatStore } from '@/store/chat';
-import { threadSelectors } from '@/store/chat/selectors';
-import { ChatMessage } from '@/types/message';
+import { ReactionPicker } from '../../../components/Reaction';
+import type { MessageActionsConfig } from '../../../types';
+import {
+  MessageActionBar,
+  type MessageActionContext,
+  type MessageActionSlot,
+} from '../../components/MessageActionBar';
 
-import { InPortalThreadContext } from '../../../context/InPortalThreadContext';
-import { useChatListActionsBar } from '../../../hooks/useChatListActionsBar';
-import { ErrorActionsBar } from './Error';
+const DEFAULT_BAR_WITH_TOOLS: MessageActionSlot[] = ['delAndRegenerate', 'copy'];
+const DEFAULT_BAR: MessageActionSlot[] = ['edit', 'copy'];
+// The developer-facing actions live one level down, under Advanced: each is
+// gated (dev mode, Labs) and rare, so flat they were noise in the menu that
+// every user opens. It sits with the other utilities rather than after Delete —
+// trailing the destructive group made a debugging aid read as a last resort.
+// The submenu drops itself when none of its children apply.
+const ADVANCED_GROUP: MessageActionSlot = {
+  children: ['copyMessageId', 'copyOperationId', 'saveAsEvalCase'],
+  key: 'advanced',
+};
+const DEFAULT_MENU: MessageActionSlot[] = [
+  'edit',
+  'copy',
+  'comments',
+  'fork',
+  'branching',
+  'collapse',
+  'divider',
+  'translate',
+  'divider',
+  'share',
+  'select',
+  'divider',
+  ADVANCED_GROUP,
+  'divider',
+  'regenerate',
+  'delAndRegenerate',
+  'del',
+];
+const ERROR_BAR: MessageActionSlot[] = ['regenerate', 'del'];
+const EMPTY_ERROR_MENU: MessageActionSlot[] = ['copyOperationId'];
+const ERROR_MENU: MessageActionSlot[] = [
+  'edit',
+  'copy',
+  'copyOperationId',
+  'comments',
+  'divider',
+  'del',
+];
 
-interface AssistantActionsProps {
-  data: ChatMessage;
+interface AssistantActionsBarProps {
+  actionsConfig?: MessageActionsConfig;
+  data: UIChatMessage;
   id: string;
-  index: number;
 }
-export const AssistantActionsBar = memo<AssistantActionsProps>(({ id, data, index }) => {
-  const { error, tools } = data;
-  const [isThreadMode, hasThread] = useChatStore((s) => [
-    !!s.activeThreadId,
-    threadSelectors.hasThreadBySourceMsgId(id)(s),
-  ]);
-  const [showShareModal, setShareModal] = useState(false);
 
-  const {
-    regenerate,
-    edit,
-    delAndRegenerate,
-    copy,
-    divider,
-    del,
-    branching,
-    // export: exportPDF,
-    share,
-    tts,
-    translate,
-  } = useChatListActionsBar({ hasThread });
+export const AssistantActionsBar = memo<AssistantActionsBarProps>(({ actionsConfig, id, data }) => {
+  const ctx = useMemo<MessageActionContext>(() => ({ data, id, role: 'assistant' }), [data, id]);
 
-  const hasTools = !!tools;
+  const { content, error, tools } = data;
 
-  const inPortalThread = useContext(InPortalThreadContext);
-  const inThread = isThreadMode || inPortalThread;
+  // Empty error messages render only an interception card — nothing to edit
+  // or copy, so only the dev-mode operation-id action remains menu-worthy
+  // (failed runs are exactly what it traces; the menu collapses away when the
+  // action opts out). When the turn streamed content before erroring, keep
+  // edit/copy so the partial reply stays salvageable.
+  if (error) {
+    const hasContent = !!content && content !== LOADING_FLAT && String(content).trim() !== '';
+    return (
+      <MessageActionBar
+        bar={ERROR_BAR}
+        ctx={ctx}
+        menu={hasContent ? ERROR_MENU : EMPTY_ERROR_MENU}
+      />
+    );
+  }
 
-  const items = useMemo(() => {
-    if (hasTools) return [delAndRegenerate, copy];
-
-    return [edit, copy, inThread ? null : branching].filter(Boolean) as ActionIconGroupItemType[];
-  }, [inThread, hasTools]);
-
-  const { t } = useTranslation('common');
-  const searchParams = useSearchParams();
-  const topic = searchParams.get('topic');
-  const [
-    deleteMessage,
-    regenerateMessage,
-    translateMessage,
-    ttsMessage,
-    delAndRegenerateMessage,
-    copyMessage,
-    openThreadCreator,
-    resendThreadMessage,
-    delAndResendThreadMessage,
-    toggleMessageEditing,
-  ] = useChatStore((s) => [
-    s.deleteMessage,
-    s.regenerateMessage,
-    s.translateMessage,
-    s.ttsMessage,
-    s.delAndRegenerateMessage,
-    s.copyMessage,
-    s.openThreadCreator,
-    s.resendThreadMessage,
-    s.delAndResendThreadMessage,
-    s.toggleMessageEditing,
-  ]);
-  const { message } = App.useApp();
-  const virtuosoRef = use(VirtuosoContext);
-
-  const onActionClick = useCallback(
-    async (action: ActionIconGroupEvent) => {
-      switch (action.key) {
-        case 'edit': {
-          toggleMessageEditing(id, true);
-
-          virtuosoRef?.current?.scrollIntoView({ align: 'start', behavior: 'auto', index });
-        }
-      }
-      if (!data) return;
-
-      switch (action.key) {
-        case 'copy': {
-          await copyMessage(id, data.content);
-          message.success(t('copySuccess', { defaultValue: 'Copy Success' }));
-          break;
-        }
-        case 'branching': {
-          if (!topic) {
-            message.warning(t('branchingRequiresSavedTopic'));
-            break;
-          }
-          openThreadCreator(id);
-          break;
-        }
-
-        case 'del': {
-          deleteMessage(id);
-          break;
-        }
-
-        case 'regenerate': {
-          if (inPortalThread) {
-            resendThreadMessage(id);
-          } else regenerateMessage(id);
-
-          // if this message is an error message, we need to delete it
-          if (data.error) deleteMessage(id);
-          break;
-        }
-
-        case 'delAndRegenerate': {
-          if (inPortalThread) {
-            delAndResendThreadMessage(id);
-          } else {
-            delAndRegenerateMessage(id);
-          }
-          break;
-        }
-
-        case 'tts': {
-          ttsMessage(id);
-          break;
-        }
-
-        // case 'export': {
-        //   setModal(true);
-        //   break;
-        // }
-
-        case 'share': {
-          setShareModal(true);
-          break;
-        }
-      }
-
-      if (action.keyPath.at(-1) === 'translate') {
-        // click the menu data with translate data, the result is:
-        // key: 'en-US'
-        // keyPath: ['en-US','translate']
-        const lang = action.keyPath[0];
-        translateMessage(id, lang);
-      }
-    },
-    [data],
-  );
-
-  if (error) return <ErrorActionsBar onActionClick={onActionClick} />;
+  const defaultBar = tools ? DEFAULT_BAR_WITH_TOOLS : DEFAULT_BAR;
 
   return (
-    <>
-      <ActionIconGroup
-        items={items}
-        menu={{
-          items: [
-            edit,
-            copy,
-            divider,
-            tts,
-            translate,
-            divider,
-            share,
-            // exportPDF,
-            divider,
-            regenerate,
-            delAndRegenerate,
-            del,
-          ],
-        }}
-        onActionClick={onActionClick}
-      />
-      {/*{showModal && (*/}
-      {/*  <ExportPreview content={data.content} onClose={() => setModal(false)} open={showModal} />*/}
-      {/*)}*/}
-      <ShareMessageModal
-        message={data!}
-        onCancel={() => {
-          setShareModal(false);
-        }}
-        open={showShareModal}
-      />
-    </>
+    <MessageActionBar
+      bar={actionsConfig?.bar ?? defaultBar}
+      ctx={ctx}
+      leading={<ReactionPicker messageId={id} />}
+      menu={actionsConfig?.menu ?? DEFAULT_MENU}
+    />
   );
 });
+
+AssistantActionsBar.displayName = 'AssistantActionsBar';

@@ -1,379 +1,312 @@
 {
-  "guide": {
-    "agents": {
-      "replaceBtn": "تغییر دسته",
-      "title": "دستیارهای جدید پیشنهادی:"
+  "guide.agents.replaceBtn": "بازنشانی",
+  "guide.agents.title": "پیشنهادهای نماینده جدید:",
+  "guide.defaultMessage": "من نماینده {{appName}} شما هستم. با هر ایده‌ای شروع کنید.<br />به نماینده‌ای تخصصی‌تر نیاز دارید؟ روی <plus /> کلیک کنید تا یکی بسازید.",
+  "guide.defaultMessageWithoutCreate": "به {{appName}} خوش آمدید. یک جمله کافی‌ست—فقط هدفتان را بیان کنید.",
+  "guide.groupActivities.analysis.codeReview.description": "بحث‌های فنی و بازبینی‌های گروهی تغییرات و پیاده‌سازی‌های کد",
+  "guide.groupActivities.analysis.codeReview.emoji": "💻",
+  "guide.groupActivities.analysis.codeReview.prompt": "بیایید با هم کد را بررسی کنیم. می‌توانید به ما در تحلیل و شناسایی نقاط قابل بهبود کمک کنید؟",
+  "guide.groupActivities.analysis.codeReview.title": "بازبینی کد",
+  "guide.groupActivities.analysis.investment.description": "تحلیل بازارها، بحث درباره استراتژی‌های سرمایه‌گذاری و به‌اشتراک‌گذاری بینش‌های مالی",
+  "guide.groupActivities.analysis.investment.emoji": "📈",
+  "guide.groupActivities.analysis.investment.prompt": "بیایید بازار را با هم تحلیل کنیم. می‌توانید در بحث استراتژی‌ها و به‌اشتراک‌گذاری بینش‌ها کمک کنید؟",
+  "guide.groupActivities.analysis.investment.title": "باشگاه سرمایه‌گذاری",
+  "guide.groupActivities.analysis.research.description": "کاوش مفاهیم علمی، انجام آزمایش‌ها و به‌اشتراک‌گذاری کشفیات",
+  "guide.groupActivities.analysis.research.emoji": "🔬",
+  "guide.groupActivities.analysis.research.prompt": "بیایید با هم علم را کشف کنیم! می‌توانید در انجام آزمایش‌ها و به‌اشتراک‌گذاری یافته‌ها کمک کنید؟",
+  "guide.groupActivities.analysis.research.title": "نمایشگاه علمی",
+  "guide.groupActivities.analysis.study.description": "جلسات مطالعه گروهی برای بحث درباره مفاهیم و حل مسائل به‌صورت مشترک",
+  "guide.groupActivities.analysis.study.emoji": "📚",
+  "guide.groupActivities.analysis.study.prompt": "بیایید یک گروه مطالعه تشکیل دهیم. می‌توانید در درک مفاهیم و حل مسائل کمک کنید؟",
+  "guide.groupActivities.analysis.study.title": "گروه مطالعه",
+  "guide.groupActivities.brainstorm.artWorkshop.description": "خلق، نقد و لذت بردن از انواع هنرهای بصری و دیجیتال",
+  "guide.groupActivities.brainstorm.artWorkshop.emoji": "🖼️",
+  "guide.groupActivities.brainstorm.artWorkshop.prompt": "بیایید یک کارگاه هنری برگزار کنیم! می‌توانید در خلق، نقد و لذت بردن از هنرها کمک کنید؟",
+  "guide.groupActivities.brainstorm.artWorkshop.title": "کارگاه هنری",
+  "guide.groupActivities.brainstorm.debate.description": "بحث‌ها و مناظره‌های ساختاریافته درباره موضوعات مختلف و رویدادهای روز",
+  "guide.groupActivities.brainstorm.debate.emoji": "⚖️",
+  "guide.groupActivities.brainstorm.debate.prompt": "بیایید یک مناظره ساختاریافته داشته باشیم. می‌توانید در سازماندهی یک بحث منطقی کمک کنید؟",
+  "guide.groupActivities.brainstorm.debate.title": "باشگاه مناظره",
+  "guide.groupActivities.brainstorm.designReview.description": "جلسات بازخورد گروهی درباره مفاهیم طراحی، نمونه‌ها یا آثار خلاقانه",
+  "guide.groupActivities.brainstorm.designReview.emoji": "🎨",
+  "guide.groupActivities.brainstorm.designReview.prompt": "نیاز به بازبینی چند طراحی داریم. می‌توانید در ارائه بازخورد سازنده کمک کنید؟",
+  "guide.groupActivities.brainstorm.designReview.title": "بازبینی طراحی",
+  "guide.groupActivities.brainstorm.ideation.description": "تولید ایده‌های خلاقانه و حل مسئله از دیدگاه‌های مختلف",
+  "guide.groupActivities.brainstorm.ideation.emoji": "🧠",
+  "guide.groupActivities.brainstorm.ideation.prompt": "بیایید برای پروژه ایده‌پردازی کنیم. می‌توانید در تولید ایده‌ها و راه‌حل‌ها کمک کنید؟",
+  "guide.groupActivities.brainstorm.ideation.title": "ایده‌پردازی",
+  "guide.groupActivities.game.debateClub.description": "بحث‌ها و مناظره‌های ساختاریافته درباره موضوعات مختلف و رویدادهای روز",
+  "guide.groupActivities.game.debateClub.emoji": "⚖️",
+  "guide.groupActivities.game.debateClub.prompt": "بیایید یک مناظره ساختاریافته داشته باشیم. می‌توانید در سازماندهی یک بحث منطقی کمک کنید؟",
+  "guide.groupActivities.game.debateClub.title": "باشگاه مناظره",
+  "guide.groupActivities.game.gameNight.description": "بازی‌ها و فعالیت‌های تعاملی سرگرم‌کننده برای ایجاد ارتباط و لذت بردن گروهی",
+  "guide.groupActivities.game.gameNight.emoji": "🎲",
+  "guide.groupActivities.game.gameNight.prompt": "شب بازی شروع شده! می‌توانید در سازماندهی بازی‌های سرگرم‌کننده کمک کنید؟",
+  "guide.groupActivities.game.gameNight.title": "شب بازی",
+  "guide.groupActivities.game.modelUN.description": "شبیه‌سازی مناظره‌های سازمان ملل و مذاکرات دیپلماتیک درباره مسائل جهانی",
+  "guide.groupActivities.game.modelUN.emoji": "🌍",
+  "guide.groupActivities.game.modelUN.prompt": "بیایید یک جلسه شبیه‌سازی سازمان ملل برگزار کنیم. می‌توانید در تنظیم مذاکرات دیپلماتیک کمک کنید؟",
+  "guide.groupActivities.game.modelUN.title": "مدل سازمان ملل",
+  "guide.groupActivities.game.werewolf.description": "بازی استنتاج اجتماعی که در آن بازیکنان با بحث و استراتژی گرگینه را شناسایی می‌کنند",
+  "guide.groupActivities.game.werewolf.emoji": "🐺",
+  "guide.groupActivities.game.werewolf.prompt": "بیایید گرگینه بازی کنیم! می‌توانید در تنظیم قوانین و اجرای بازی کمک کنید؟",
+  "guide.groupActivities.game.werewolf.title": "بازی گرگینه",
+  "guide.groupActivities.general.brainstorm.description": "تولید ایده‌های خلاقانه و حل مسئله از دیدگاه‌های مختلف",
+  "guide.groupActivities.general.brainstorm.emoji": "🧠",
+  "guide.groupActivities.general.brainstorm.prompt": "بیایید برای پروژه ایده‌پردازی کنیم. می‌توانید در تولید ایده‌ها و راه‌حل‌ها کمک کنید؟",
+  "guide.groupActivities.general.brainstorm.title": "ایده‌پردازی",
+  "guide.groupActivities.general.debate.description": "بحث‌ها و مناظره‌های ساختاریافته درباره موضوعات مختلف و رویدادهای روز",
+  "guide.groupActivities.general.debate.emoji": "⚖️",
+  "guide.groupActivities.general.debate.prompt": "بیایید یک مناظره ساختاریافته داشته باشیم. می‌توانید در سازماندهی یک بحث منطقی کمک کنید؟",
+  "guide.groupActivities.general.debate.title": "باشگاه مناظره",
+  "guide.groupActivities.general.languagePractice.description": "تمرین مکالمه و یادگیری زبان‌های جدید با گویشوران بومی",
+  "guide.groupActivities.general.languagePractice.emoji": "🗣️",
+  "guide.groupActivities.general.languagePractice.prompt": "بیایید با هم زبان جدیدی تمرین کنیم. می‌توانید در یادگیری و مکالمه کمک کنید؟",
+  "guide.groupActivities.general.languagePractice.title": "تمرین زبان",
+  "guide.groupActivities.general.studyGroup.description": "جلسات مطالعه گروهی برای بحث درباره مفاهیم و حل مسائل به‌صورت مشترک",
+  "guide.groupActivities.general.studyGroup.emoji": "📚",
+  "guide.groupActivities.general.studyGroup.prompt": "بیایید یک گروه مطالعه تشکیل دهیم. می‌توانید در درک مفاهیم و حل مسائل کمک کنید؟",
+  "guide.groupActivities.general.studyGroup.title": "گروه مطالعه",
+  "guide.groupActivities.planning.cookingClass.description": "یادگیری و به‌اشتراک‌گذاری مهارت‌های آشپزی، دستورها و سنت‌های غذایی",
+  "guide.groupActivities.planning.cookingClass.emoji": "👨‍🍳",
+  "guide.groupActivities.planning.cookingClass.prompt": "بیایید در یک کلاس آشپزی شرکت کنیم! می‌توانید در یادگیری دستورها و تکنیک‌های جدید کمک کنید؟",
+  "guide.groupActivities.planning.cookingClass.title": "کلاس آشپزی",
+  "guide.groupActivities.planning.fitnessChallenge.description": "تعیین اهداف تناسب اندام گروهی، به‌اشتراک‌گذاری تمرین‌ها و ایجاد انگیزه",
+  "guide.groupActivities.planning.fitnessChallenge.emoji": "💪",
+  "guide.groupActivities.planning.fitnessChallenge.prompt": "بیایید یک چالش تناسب اندام شروع کنیم! می‌توانید در تعیین اهداف و حفظ انگیزه کمک کنید؟",
+  "guide.groupActivities.planning.fitnessChallenge.title": "چالش تناسب اندام",
+  "guide.groupActivities.planning.planningPoker.description": "تکنیک تخمین چابک با استفاده از کارت‌ها برای برآورد وظایف پروژه",
+  "guide.groupActivities.planning.planningPoker.emoji": "🃏",
+  "guide.groupActivities.planning.planningPoker.prompt": "در حال انجام برنامه‌ریزی پوکر برای پروژه هستیم. می‌توانید در تخمین وظایف با تکنیک‌های چابک کمک کنید؟",
+  "guide.groupActivities.planning.planningPoker.title": "برنامه‌ریزی پوکر",
+  "guide.groupActivities.planning.travelPlanning.description": "برنامه‌ریزی سفر، به‌اشتراک‌گذاری تجربیات و کشف مقاصد جدید",
+  "guide.groupActivities.planning.travelPlanning.emoji": "✈️",
+  "guide.groupActivities.planning.travelPlanning.prompt": "بیایید با هم یک سفر برنامه‌ریزی کنیم! می‌توانید در تحقیق درباره مقاصد و ساخت برنامه سفر کمک کنید؟",
+  "guide.groupActivities.planning.travelPlanning.title": "برنامه‌ریزی سفر",
+  "guide.groupActivities.product.codeReview.description": "بحث‌های فنی و بازبینی‌های گروهی تغییرات و پیاده‌سازی‌های کد",
+  "guide.groupActivities.product.codeReview.emoji": "💻",
+  "guide.groupActivities.product.codeReview.prompt": "بیایید با هم کد را بررسی کنیم. می‌توانید به ما در تحلیل و شناسایی نقاط قابل بهبود کمک کنید؟",
+  "guide.groupActivities.product.codeReview.title": "بازبینی کد",
+  "guide.groupActivities.product.designReview.description": "جلسات بازخورد گروهی درباره مفاهیم طراحی، نمونه‌ها یا آثار خلاقانه",
+  "guide.groupActivities.product.designReview.emoji": "🎨",
+  "guide.groupActivities.product.designReview.prompt": "نیاز به بازبینی چند طراحی داریم. می‌توانید در ارائه بازخورد سازنده کمک کنید؟",
+  "guide.groupActivities.product.designReview.title": "بازبینی طراحی",
+  "guide.groupActivities.product.sprintPlanning.description": "تکنیک تخمین چابک با استفاده از کارت‌ها برای برآورد وظایف پروژه",
+  "guide.groupActivities.product.sprintPlanning.emoji": "🃏",
+  "guide.groupActivities.product.sprintPlanning.prompt": "در حال انجام برنامه‌ریزی پوکر برای پروژه هستیم. می‌توانید در تخمین وظایف با تکنیک‌های چابک کمک کنید؟",
+  "guide.groupActivities.product.sprintPlanning.title": "برنامه‌ریزی پوکر",
+  "guide.groupActivities.product.techExchange.description": "بحث درباره فناوری‌های نوظهور، نوآوری‌ها و روندهای صنعت",
+  "guide.groupActivities.product.techExchange.emoji": "🚀",
+  "guide.groupActivities.product.techExchange.prompt": "بیایید یک تبادل فناوری داشته باشیم! می‌توانید در بحث درباره فناوری‌های نوظهور و روندها کمک کنید؟",
+  "guide.groupActivities.product.techExchange.title": "تبادل فناوری",
+  "guide.groupActivities.title": "پیشنهادهای استفاده از گفت‌وگوی گروهی",
+  "guide.groupActivities.writing.bookClub.description": "بحث‌های ادبی و تحلیل کتاب‌ها، داستان‌ها و آثار ادبی",
+  "guide.groupActivities.writing.bookClub.emoji": "📖",
+  "guide.groupActivities.writing.bookClub.prompt": "بیایید یک باشگاه کتاب راه بیندازیم. می‌توانید در تحلیل کتاب و بررسی موضوعات آن کمک کنید؟",
+  "guide.groupActivities.writing.bookClub.title": "باشگاه کتاب",
+  "guide.groupActivities.writing.movieClub.description": "تماشا و بحث درباره فیلم‌ها، مستندها و رسانه‌های تصویری",
+  "guide.groupActivities.writing.movieClub.emoji": "🎬",
+  "guide.groupActivities.writing.movieClub.prompt": "بیایید یک باشگاه فیلم راه بیندازیم. می‌توانید در تحلیل فیلم و بررسی موضوعات آن کمک کنید؟",
+  "guide.groupActivities.writing.movieClub.title": "باشگاه فیلم",
+  "guide.groupActivities.writing.musicSession.description": "جلسات گروهی برای خلق، به‌اشتراک‌گذاری و لذت بردن از موسیقی",
+  "guide.groupActivities.writing.musicSession.emoji": "🎵",
+  "guide.groupActivities.writing.musicSession.prompt": "بیایید یک جلسه موسیقی داشته باشیم! می‌توانید در خلق و لذت بردن از موسیقی کمک کنید؟",
+  "guide.groupActivities.writing.musicSession.title": "جلسه موسیقی",
+  "guide.groupActivities.writing.studyGroup.description": "جلسات مطالعه گروهی برای بحث درباره مفاهیم و حل مسائل به‌صورت مشترک",
+  "guide.groupActivities.writing.studyGroup.emoji": "📚",
+  "guide.groupActivities.writing.studyGroup.prompt": "بیایید یک گروه مطالعه تشکیل دهیم. می‌توانید در درک مفاهیم و حل مسائل کمک کنید؟",
+  "guide.groupActivities.writing.studyGroup.title": "گروه مطالعه",
+  "guide.groupMessage": "به گروه‌ها خوش آمدید. در یک گفت‌وگوی مشترک، بگذارید عوامل با هم وظایف را پیش ببرند.",
+  "guide.groupTemplates.analysis.description": "بینش‌های مبتنی بر داده و تحلیل‌های پژوهشی عمیق",
+  "guide.groupTemplates.analysis.members": [
+    {
+      "avatar": "📊",
+      "backgroundColor": "#E8F8F5",
+      "plugins": ["steam"],
+      "systemRole": "شما در پردازش و تفسیر داده‌ها مهارت دارید و الگوها و روندها را از طریق نمودارها و تحلیل‌های آماری آشکار می‌کنید.",
+      "title": "تحلیل‌گر داده"
     },
-    "defaultMessage": "من دستیار هوشمند شخصی شما {{appName}} هستم، چطور می‌توانم به شما کمک کنم؟<br />اگر به دستیارهای حرفه‌ای‌تر یا سفارشی نیاز دارید، می‌توانید با کلیک بر روی <plus /> یک دستیار سفارشی ایجاد کنید.",
-    "defaultMessageWithoutCreate": "من دستیار هوشمند شخصی شما {{appName}} هستم، چطور می‌توانم به شما کمک کنم؟",
-    "groupActivities": {
-      "analysis": {
-        "codeReview": {
-          "description": "بحث فنی و بازبینی همتا در مورد تغییرات و پیاده‌سازی کد",
-          "emoji": "💻",
-          "prompt": "بیایید با هم کدی را بررسی کنیم. آیا می‌توانید به ما کمک کنید این کدها را تحلیل کنیم و نقاط قابل بهبود را شناسایی کنیم؟",
-          "title": "بازبینی کد"
-        },
-        "investment": {
-          "description": "تحلیل بازار، بحث در مورد استراتژی‌های سرمایه‌گذاری و به اشتراک‌گذاری بینش‌های مالی",
-          "emoji": "📈",
-          "prompt": "بیایید بازار را با هم تحلیل کنیم. آیا می‌توانید به ما کمک کنید استراتژی‌های سرمایه‌گذاری را بحث کنیم و بینش‌های مالی را به اشتراک بگذاریم؟",
-          "title": "باشگاه سرمایه‌گذاری"
-        },
-        "research": {
-          "description": "کاوش مفاهیم علمی، انجام آزمایش‌ها و به اشتراک‌گذاری یافته‌ها",
-          "emoji": "🔬",
-          "prompt": "بیایید با هم به کاوش علمی بپردازیم! آیا می‌توانید به ما کمک کنید آزمایش‌ها را انجام دهیم و یافته‌هایمان را به اشتراک بگذاریم؟",
-          "title": "نمایشگاه علمی"
-        },
-        "study": {
-          "description": "جلسات یادگیری تعاملی، بحث در مورد مفاهیم و حل مسائل به صورت گروهی",
-          "emoji": "📚",
-          "prompt": "بیایید یک گروه مطالعه تشکیل دهیم. آیا می‌توانید به ما کمک کنید این مفاهیم را درک کنیم و مسائل را با هم حل کنیم؟",
-          "title": "گروه مطالعه"
-        }
-      },
-      "brainstorm": {
-        "artWorkshop": {
-          "description": "خلق، نقد و لذت بردن از انواع هنرهای بصری و دیجیتال",
-          "emoji": "🖼️",
-          "prompt": "بیایید یک کارگاه هنری برگزار کنیم! آیا می‌توانید به ما کمک کنید هنرهای مختلف را خلق، نقد و تحسین کنیم؟",
-          "title": "کارگاه هنری"
-        },
-        "debate": {
-          "description": "بحث و مناظره ساختاریافته درباره موضوعات مختلف و رویدادهای جاری",
-          "emoji": "⚖️",
-          "prompt": "بیایید یک مناظره ساختاریافته برگزار کنیم. آیا می‌توانید به ما کمک کنید یک بحث منطقی درباره این موضوع سازماندهی کنیم؟",
-          "title": "باشگاه مناظره"
-        },
-        "designReview": {
-          "description": "جلسات بازخورد تعاملی درباره مفاهیم طراحی، نمونه‌های اولیه یا آثار خلاقانه",
-          "emoji": "🎨",
-          "prompt": "ما نیاز به بررسی برخی آثار طراحی داریم. آیا می‌توانید به ما کمک کنید بازخورد سازنده‌ای درباره مفاهیم و نمونه‌های اولیه ارائه دهیم؟",
-          "title": "بازبینی طراحی"
-        },
-        "ideation": {
-          "description": "تولید ایده‌های خلاقانه و حل مسئله به صورت تعاملی و چندوجهی",
-          "emoji": "🧠",
-          "prompt": "بیایید برای پروژه ایده‌پردازی کنیم. آیا می‌توانید به ما کمک کنید ایده‌ها و راه‌حل‌های خلاقانه تولید کنیم؟",
-          "title": "ایده‌پردازی"
-        }
-      },
-      "game": {
-        "debateClub": {
-          "description": "بحث و مناظره ساختاریافته درباره موضوعات مختلف و رویدادهای جاری",
-          "emoji": "⚖️",
-          "prompt": "بیایید یک مناظره ساختاریافته برگزار کنیم. آیا می‌توانید به ما کمک کنید یک بحث منطقی درباره این موضوع سازماندهی کنیم؟",
-          "title": "باشگاه مناظره"
-        },
-        "gameNight": {
-          "description": "بازی‌ها و فعالیت‌های تعاملی سرگرم‌کننده برای ایجاد پیوند تیمی و لذت بردن",
-          "emoji": "🎲",
-          "prompt": "شب بازی شروع شده! آیا می‌توانید به ما کمک کنید بازی‌های تعاملی سرگرم‌کننده‌ای برای ایجاد پیوند تیمی سازماندهی کنیم؟",
-          "title": "شب بازی"
-        },
-        "modelUN": {
-          "description": "شبیه‌سازی مناظره‌های سازمان ملل و مذاکرات دیپلماتیک درباره مسائل جهانی",
-          "emoji": "🌍",
-          "prompt": "بیایید یک مناظره سازمان ملل شبیه‌سازی کنیم. آیا می‌توانید به ما کمک کنید یک مذاکره دیپلماتیک درباره مسائل جهانی تنظیم کنیم؟",
-          "title": "شبیه‌سازی سازمان ملل"
-        },
-        "werewolf": {
-          "description": "بازی استدلال اجتماعی که بازیکنان با استراتژی و بحث، گرگینه‌ها را شناسایی می‌کنند",
-          "emoji": "🐺",
-          "prompt": "بیایید بازی گرگینه را انجام دهیم! آیا می‌توانید به ما کمک کنید قوانین را تنظیم کنید و این بازی استدلال اجتماعی را مدیریت کنید؟",
-          "title": "بازی گرگینه"
-        }
-      },
-      "general": {
-        "brainstorm": {
-          "description": "تولید ایده‌های خلاقانه و حل مسئله به صورت تعاملی و چندوجهی",
-          "emoji": "🧠",
-          "prompt": "بیایید برای پروژه ایده‌پردازی کنیم. آیا می‌توانید به ما کمک کنید ایده‌ها و راه‌حل‌های خلاقانه تولید کنیم؟",
-          "title": "ایده‌پردازی"
-        },
-        "debate": {
-          "description": "بحث و مناظره ساختاریافته درباره موضوعات مختلف و رویدادهای جاری",
-          "emoji": "⚖️",
-          "prompt": "بیایید یک مناظره ساختاریافته برگزار کنیم. آیا می‌توانید به ما کمک کنید یک بحث منطقی درباره این موضوع سازماندهی کنیم؟",
-          "title": "باشگاه مناظره"
-        },
-        "languagePractice": {
-          "description": "تمرین مکالمه و یادگیری زبان جدید همراه با افراد بومی",
-          "emoji": "🗣️",
-          "prompt": "بیایید با هم زبان جدیدی تمرین کنیم. آیا می‌توانید به ما کمک کنید این زبان را یاد بگیریم و تمرین کنیم؟",
-          "title": "تمرین زبان"
-        },
-        "studyGroup": {
-          "description": "جلسات یادگیری تعاملی، بحث در مورد مفاهیم و حل مسائل به صورت گروهی",
-          "emoji": "📚",
-          "prompt": "بیایید یک گروه مطالعه تشکیل دهیم. آیا می‌توانید به ما کمک کنید این مفاهیم را درک کنیم و مسائل را با هم حل کنیم؟",
-          "title": "گروه مطالعه"
-        }
-      },
-      "planning": {
-        "cookingClass": {
-          "description": "یادگیری و به اشتراک‌گذاری مهارت‌های آشپزی، دستور پخت و سنت‌های آشپزی",
-          "emoji": "👨‍🍳",
-          "prompt": "بیایید کلاس آشپزی برگزار کنیم! آیا می‌توانید به ما کمک کنید دستورهای جدید و مهارت‌های آشپزی را یاد بگیریم؟",
-          "title": "کلاس آشپزی"
-        },
-        "fitnessChallenge": {
-          "description": "تعیین اهداف گروهی تناسب اندام، به اشتراک‌گذاری روش‌های تمرینی و انگیزه‌دهی متقابل",
-          "emoji": "💪",
-          "prompt": "بیایید چالش تناسب اندام را شروع کنیم! آیا می‌توانید به ما کمک کنید اهداف تعیین کنیم و یکدیگر را برای حفظ سلامتی تشویق کنیم؟",
-          "title": "چالش تناسب اندام"
-        },
-        "planningPoker": {
-          "description": "تکنیک برآورد چابک با استفاده از کارت‌ها برای تخمین وظایف و حجم کار پروژه",
-          "emoji": "🃏",
-          "prompt": "ما در حال انجام برنامه‌ریزی پوکر برای پروژه هستیم. آیا می‌توانید به ما کمک کنید با استفاده از تکنیک‌های چابک حجم کار این وظایف را تخمین بزنیم؟",
-          "title": "برنامه‌ریزی پوکر"
-        },
-        "travelPlanning": {
-          "description": "برنامه‌ریزی سفر، به اشتراک‌گذاری تجربیات سفر و کشف مقاصد جدید",
-          "emoji": "✈️",
-          "prompt": "بیایید با هم سفر برنامه‌ریزی کنیم! آیا می‌توانید به ما کمک کنید مقصدها را بررسی کنیم و برنامه سفر را تنظیم کنیم؟",
-          "title": "برنامه‌ریزی سفر"
-        }
-      },
-      "product": {
-        "codeReview": {
-          "description": "بحث فنی و بازبینی همتا در مورد تغییرات و پیاده‌سازی کد",
-          "emoji": "💻",
-          "prompt": "بیایید با هم کدی را بررسی کنیم. آیا می‌توانید به ما کمک کنید این کدها را تحلیل کنیم و نقاط قابل بهبود را شناسایی کنیم؟",
-          "title": "بازبینی کد"
-        },
-        "designReview": {
-          "description": "جلسات بازخورد تعاملی درباره مفاهیم طراحی، نمونه‌های اولیه یا آثار خلاقانه",
-          "emoji": "🎨",
-          "prompt": "ما نیاز به بررسی برخی آثار طراحی داریم. آیا می‌توانید به ما کمک کنید بازخورد سازنده‌ای درباره مفاهیم و نمونه‌های اولیه ارائه دهیم؟",
-          "title": "بازبینی طراحی"
-        },
-        "sprintPlanning": {
-          "description": "تکنیک برآورد چابک با استفاده از کارت‌ها برای تخمین وظایف و حجم کار پروژه",
-          "emoji": "🃏",
-          "prompt": "ما در حال انجام برنامه‌ریزی پوکر برای پروژه هستیم. آیا می‌توانید به ما کمک کنید با استفاده از تکنیک‌های چابک حجم کار این وظایف را تخمین بزنیم؟",
-          "title": "برنامه‌ریزی پوکر"
-        },
-        "techExchange": {
-          "description": "بحث در مورد فناوری‌های نوظهور، نوآوری‌ها و روندهای صنعت",
-          "emoji": "🚀",
-          "prompt": "بیایید تبادل فناوری داشته باشیم! آیا می‌توانید به ما کمک کنید درباره فناوری‌های نوظهور و روندهای صنعت بحث کنیم؟",
-          "title": "تبادل فناوری"
-        }
-      },
-      "title": "توصیه‌های استفاده از چت گروهی",
-      "writing": {
-        "bookClub": {
-          "description": "بحث و تحلیل ادبی درباره کتاب‌ها، داستان‌ها و آثار ادبی",
-          "emoji": "📖",
-          "prompt": "بیایید بحث باشگاه کتاب را شروع کنیم. آیا می‌توانید به ما کمک کنید این کتاب را تحلیل کنیم و موضوعات آن را بررسی کنیم؟",
-          "title": "باشگاه کتاب"
-        },
-        "movieClub": {
-          "description": "تماشای فیلم، مستند و رسانه‌های بصری و بحث درباره آن‌ها",
-          "emoji": "🎬",
-          "prompt": "بیایید بحث باشگاه فیلم را شروع کنیم. آیا می‌توانید به ما کمک کنید این فیلم را تحلیل کنیم و موضوعات آن را بررسی کنیم؟",
-          "title": "باشگاه فیلم"
-        },
-        "musicSession": {
-          "description": "جلسات همکاری در خلق، به اشتراک‌گذاری و تحسین موسیقی",
-          "emoji": "🎵",
-          "prompt": "بیایید اجرای بداهه موسیقی داشته باشیم! آیا می‌توانید به ما کمک کنید موسیقی خلق کنیم و از آن لذت ببریم؟",
-          "title": "اجرای بداهه موسیقی"
-        },
-        "studyGroup": {
-          "description": "جلسات یادگیری تعاملی، بحث در مورد مفاهیم و حل مسائل به صورت گروهی",
-          "emoji": "📚",
-          "prompt": "بیایید یک گروه مطالعه تشکیل دهیم. آیا می‌توانید به ما کمک کنید این مفاهیم را درک کنیم و مسائل را با هم حل کنیم؟",
-          "title": "گروه مطالعه"
-        }
-      }
+    {
+      "avatar": "🧑‍🔬",
+      "backgroundColor": "#E8F5FF",
+      "systemRole": "شما متخصص پژوهش هستید و در گردآوری اطلاعات و تحلیل عمیق از دیدگاه‌های مختلف تخصص دارید.",
+      "title": "متخصص پژوهش"
     },
-    "groupMessage": "به چت گروهی خوش آمدید! در یک فضای گفت‌وگوی مشترک با چند دستیار هوش مصنوعی همکاری کنید.",
-    "groupTemplates": {
-      "analysis": {
-        "description": "بینش‌های مبتنی بر داده، تحلیل عمیق و پژوهش",
-        "members": [
-          {
-            "avatar": "📊",
-            "backgroundColor": "#E8F8F5",
-            "plugins": ["steam"],
-            "systemRole": "شما در پردازش و تفسیر داده‌ها مهارت دارید و از طریق نمودارها و تحلیل‌های آماری، الگوها و روندهای پنهان در پس داده‌ها را آشکار می‌کنید.",
-            "title": "تحلیلگر داده"
-          },
-          {
-            "avatar": "🧑‍🔬",
-            "backgroundColor": "#E8F5FF",
-            "systemRole": "شما یک متخصص پژوهش هستید که مسئول جمع‌آوری اطلاعات و تحقیقات عمیق می‌باشید و قادر به تحلیل جامع مسائل از زوایای مختلف هستید.",
-            "title": "متخصص پژوهش"
-          },
-          {
-            "avatar": "📈",
-            "backgroundColor": "#FFF7E8",
-            "systemRole": "شما یک متخصص آمار هستید که در روش‌ها و مدل‌های آماری مهارت دارید و می‌توانید بینش‌های تجاری ارزشمند را از داده‌ها استخراج کنید.",
-            "title": "متخصص آمار"
-          },
-          {
-            "avatar": "🧮",
-            "backgroundColor": "#F0F8FF",
-            "systemRole": "شما یک تحلیلگر کمی هستید که در مدل‌سازی کمی و ارزیابی ریسک تخصص دارید و مسائل پیچیده را با روش‌های ریاضی حل می‌کنید.",
-            "title": "تحلیلگر کمی"
-          }
-        ],
-        "title": "تیم تحلیل"
-      },
-      "brainstorm": {
-        "description": "تفکر خلاق چندوجهی، ایجاد امکانات بی‌پایان",
-        "members": [
-          {
-            "avatar": "🧠",
-            "backgroundColor": "#E8F5FF",
-            "systemRole": "شما یک مدیر خلاقیت هستید که در هدایت جهت‌گیری خلاقانه از دید کلان مهارت دارید و می‌توانید مفاهیم انتزاعی را به طرح‌های خلاقانه قابل اجرا تبدیل کنید.",
-            "title": "مدیر خلاقیت"
-          },
-          {
-            "avatar": "🧑‍🔬",
-            "backgroundColor": "#FFF7E8",
-            "systemRole": "شما یک متخصص نوآوری هستید که مسئول کشف راه‌حل‌های نوآورانه و تفکر پیشگامانه می‌باشید و توانایی خروج از چارچوب‌های سنتی را دارید.",
-            "title": "متخصص نوآوری"
-          },
-          {
-            "avatar": "🎨",
-            "backgroundColor": "#F6E8FF",
-            "systemRole": "شما یک متخصص تفکر طراحی هستید که از منظر تجربه کاربری و ارائه بصری به مسائل می‌نگرید و بر بیان خلاقانه و قابل مشاهده تأکید دارید.",
-            "title": "متخصص تفکر طراحی"
-          }
-        ],
-        "title": "گروه ایده‌پردازی"
-      },
-      "game": {
-        "description": "لذت بردن از انواع بازی‌های متنی چندنفره، مانند بازی گرگینه و چه کسی جاسوس است",
-        "members": [
-          null,
-          {
-            "avatar": "🧑‍🔬",
-            "backgroundColor": "#FFF7E8",
-            "systemRole": "شما در شرکت در انواع بازی‌های متنی چندنفره مهارت دارید و می‌توانید بر اساس قوانین بازی، بازی را اجرا کنید.",
-            "title": "بازیکن بازی"
-          },
-          {
-            "avatar": "🎨",
-            "backgroundColor": "#F6E8FF",
-            "systemRole": "شما در شرکت در انواع بازی‌های متنی چندنفره مهارت دارید و می‌توانید بر اساس قوانین بازی، بازی را اجرا کنید.",
-            "title": "بازیکن بازی"
-          },
-          {
-            "avatar": "🧑‍🎨",
-            "backgroundColor": "#F6E8FF",
-            "systemRole": "شما در شرکت در انواع بازی‌های متنی چندنفره مهارت دارید و می‌توانید بر اساس قوانین بازی، بازی را اجرا کنید.",
-            "title": "بازیکن بازی"
-          }
-        ],
-        "title": "سالن بازی"
-      },
-      "planning": {
-        "description": "برنامه‌ریزی استراتژیک و مدیریت پروژه، هماهنگی کلان",
-        "members": [
-          {
-            "avatar": "📋",
-            "backgroundColor": "#E8F5FF",
-            "systemRole": "شما مسئول برنامه‌ریزی کلی پروژه، کنترل پیشرفت و هماهنگی منابع هستید تا اطمینان حاصل شود پروژه به موقع و با کیفیت بالا تکمیل شود.",
-            "title": "مدیر پروژه"
-          },
-          {
-            "avatar": "🎯",
-            "backgroundColor": "#FFF7E8",
-            "systemRole": "شما مسئول تدوین برنامه استراتژیک بلندمدت، تحلیل فرصت‌های بازار و تعیین اهداف و مسیرهای دستیابی هستید.",
-            "title": "مسئول استراتژی"
-          },
-          {
-            "avatar": "🧑‍🎨",
-            "backgroundColor": "#F0F8FF",
-            "systemRole": "شما مسئول تدوین برنامه اجرایی دقیق، هماهنگی منابع بخش‌های مختلف و اطمینان از قابلیت اجرای برنامه هستید.",
-            "title": "متخصص توسعه غذا"
-          }
-        ],
-        "title": "تیم توسعه غذا"
-      },
-      "product": {
-        "description": "طراحی و توسعه محصول، خلق محصولات با کیفیت",
-        "members": [
-          {
-            "avatar": "🎨",
-            "backgroundColor": "#F6E8FF",
-            "systemRole": "شما طراح هستید که در طراحی انواع محصولات مهارت دارید و می‌توانید بر اساس نیازهای محصول طراحی انجام دهید.",
-            "title": "طراح"
-          },
-          {
-            "avatar": "🧑",
-            "backgroundColor": "#E8F5FF",
-            "systemRole": "شما مدیر محصول هستید که مسئول برنامه‌ریزی، طراحی، توسعه و نگهداری محصول هستید و کیفیت و تجربه کاربری محصول را تضمین می‌کنید.",
-            "title": "مدیر محصول"
-          },
-          {
-            "avatar": "🧑‍💻",
-            "backgroundColor": "#E8F8F5",
-            "systemRole": "شما مهندس فول‌استک با تجربه هستید که در توسعه انواع محصولات مهارت دارید و می‌توانید بر اساس نیازهای محصول توسعه انجام دهید.",
-            "title": "مهندس فول‌استک"
-          }
-        ],
-        "title": "تیم توسعه محصول"
-      },
-      "writing": {
-        "description": "تولید محتوا و ویرایش، خلق متون با کیفیت",
-        "members": [
-          {
-            "avatar": "✍️",
-            "backgroundColor": "#F6E8FF",
-            "systemRole": "شما در خلق محتوا در انواع سبک‌های نوشتاری مهارت دارید و می‌توانید سبک نوشتار را بر اساس موقعیت و مخاطب تنظیم کنید.",
-            "title": "نویسنده محتوا"
-          },
-          {
-            "avatar": "🧑‍🎨",
-            "backgroundColor": "#E8F8F5",
-            "systemRole": "شما ویراستار هستید که مسئول بازبینی، اصلاح و بهینه‌سازی متن‌ها هستید و دقت، روانی و حرفه‌ای بودن محتوا را تضمین می‌کنید.",
-            "title": "ویراستار"
-          }
-        ],
-        "title": "حلقه نویسندگی"
-      }
+    {
+      "avatar": "📈",
+      "backgroundColor": "#FFF7E8",
+      "systemRole": "شما متخصص آمار هستید و در روش‌ها و مدل‌های آماری مختلف مهارت دارید و از داده‌ها بینش‌های ارزشمند تجاری استخراج می‌کنید.",
+      "title": "آمارشناس"
     },
-    "qa": {
-      "q01": "LobeHub چیست؟",
-      "q02": "{{appName}} چیست؟",
-      "q03": "آیا {{appName}} پشتیبانی جامعه دارد؟",
-      "q04": "{{appName}} چه قابلیت‌هایی دارد؟",
-      "q05": "چگونه می‌توان {{appName}} را مستقر و استفاده کرد؟",
-      "q06": "قیمت‌گذاری {{appName}} چگونه است؟",
-      "q07": "آیا {{appName}} رایگان است؟",
-      "q08": "آیا نسخه ابری وجود دارد؟",
-      "q09": "آیا از مدل‌های زبانی محلی پشتیبانی می‌شود؟",
-      "q10": "آیا از تشخیص و تولید تصویر پشتیبانی می‌شود؟",
-      "q11": "آیا از تبدیل متن به گفتار و تشخیص گفتار پشتیبانی می‌شود؟",
-      "q12": "آیا از سیستم افزونه‌ها پشتیبانی می‌شود؟",
-      "q13": "آیا بازار مخصوصی برای دریافت GPTها وجود دارد؟",
-      "q14": "آیا از چندین ارائه‌دهنده خدمات هوش مصنوعی پشتیبانی می‌شود؟",
-      "q15": "اگر در حین استفاده با مشکلی مواجه شدم، چه کاری باید انجام دهم؟"
-    },
-    "questions": {
-      "moreBtn": "بیشتر بدانید",
-      "title": "سعی کن بپرسی:"
-    },
-    "welcome": {
-      "afternoon": "عصر بخیر",
-      "morning": "صبح بخیر",
-      "night": "شب بخیر",
-      "noon": "ظهر بخیر"
+    {
+      "avatar": "🧮",
+      "backgroundColor": "#F0F8FF",
+      "systemRole": "شما تحلیل‌گر کمی هستید و با استفاده از روش‌های ریاضی به مدل‌سازی و ارزیابی ریسک برای حل مسائل پیچیده می‌پردازید.",
+      "title": "تحلیل‌گر کمی"
     }
-  },
-  "header": "خوش آمدید به استفاده",
-  "pickAgent": "یا از الگوهای دستیار زیر انتخاب کنید",
-  "skip": "رد کردن ایجاد",
-  "slogan": {
-    "desc1": "خوشه‌های مغزی را فعال کنید و جرقه‌های تفکر را برانگیزید. دستیار هوشمند شما همیشه در کنار شماست.",
-    "desc2": "اولین دستیار خود را ایجاد کنید، بیایید شروع کنیم~",
-    "title": "یک مغز هوشمندتر برای خود داشته باشید"
+  ],
+  "guide.groupTemplates.analysis.title": "تیم تحلیل",
+  "guide.groupTemplates.brainstorm.description": "تفکر خلاق از دیدگاه‌های گوناگون برای جرقه زدن به بی‌نهایت ایده",
+  "guide.groupTemplates.brainstorm.members": [
+    {
+      "avatar": "🧠",
+      "backgroundColor": "#E8F5FF",
+      "systemRole": "شما کارگردان خلاق هستید و در هدایت مسیر خلاقانه از دید کلان و تبدیل ایده‌های انتزاعی به برنامه‌های عملی مهارت دارید.",
+      "title": "کارگردان خلاق"
+    },
+    {
+      "avatar": "🧑‍🔬",
+      "backgroundColor": "#FFF7E8",
+      "systemRole": "شما متخصص نوآوری هستید و بر کشف راه‌حل‌های نو و تفکر خلاقانه تمرکز دارید و خارج از چارچوب فکر می‌کنید.",
+      "title": "متخصص نوآوری"
+    },
+    {
+      "avatar": "🎨",
+      "backgroundColor": "#F6E8FF",
+      "systemRole": "شما متخصص تفکر طراحی هستید و از دید تجربه کاربر و ارائه بصری به مسائل نگاه می‌کنید و بر بیان تصویری تأکید دارید.",
+      "title": "متفکر طراحی"
+    }
+  ],
+  "guide.groupTemplates.brainstorm.title": "گروه طوفان فکری",
+  "guide.groupTemplates.game.description": "بازی‌های متنی چندنفره مانند گرگینه و جاسوس‌بازی را انجام دهید",
+  "guide.groupTemplates.game.members": [
+    {
+      "avatar": "🧠",
+      "backgroundColor": "#E8F5FF",
+      "systemRole": "شما میزبان بازی هستید و در سازماندهی بازی‌های متنی چندنفره و هدایت بازیکنان در طول بازی مهارت دارید.",
+      "title": "میزبان بازی"
+    },
+    {
+      "avatar": "🧑‍🔬",
+      "backgroundColor": "#FFF7E8",
+      "systemRole": "شما در شرکت در بازی‌های متنی چندنفره مهارت دارید و می‌توانید طبق قوانین بازی کنید.",
+      "title": "بازیکن بازی"
+    },
+    {
+      "avatar": "🎨",
+      "backgroundColor": "#F6E8FF",
+      "systemRole": "شما در شرکت در بازی‌های متنی چندنفره مهارت دارید و می‌توانید طبق قوانین بازی کنید.",
+      "title": "بازیکن بازی"
+    },
+    {
+      "avatar": "🧑‍🎨",
+      "backgroundColor": "#F6E8FF",
+      "systemRole": "شما در شرکت در بازی‌های متنی چندنفره مهارت دارید و می‌توانید طبق قوانین بازی کنید.",
+      "title": "بازیکن بازی"
+    }
+  ],
+  "guide.groupTemplates.game.title": "اتاق بازی",
+  "guide.groupTemplates.planning.description": "برنامه‌ریزی استراتژیک و مدیریت پروژه با دید کلان",
+  "guide.groupTemplates.planning.members": [
+    {
+      "avatar": "📋",
+      "backgroundColor": "#E8F5FF",
+      "systemRole": "شما مسئول برنامه‌ریزی کلی پروژه، کنترل پیشرفت و هماهنگی منابع هستید تا تحویل به‌موقع و با کیفیت تضمین شود.",
+      "title": "سرآشپز"
+    },
+    {
+      "avatar": "🎯",
+      "backgroundColor": "#FFF7E8",
+      "systemRole": "شما مسئول برنامه‌ریزی استراتژیک بلندمدت هستید، فرصت‌های بازار را تحلیل می‌کنید، اهداف را تعیین کرده و مسیر موفقیت را مشخص می‌کنید.",
+      "title": "متخصص تأمین مواد اولیه"
+    },
+    {
+      "avatar": "🧑‍🎨",
+      "backgroundColor": "#F0F8FF",
+      "systemRole": "شما مسئول برنامه‌های اجرایی دقیق هستید و منابع را در بخش‌های مختلف هماهنگ می‌کنید تا قابلیت اجرا تضمین شود.",
+      "title": "متخصص تحقیق و توسعه آشپزی"
+    }
+  ],
+  "guide.groupTemplates.planning.title": "گروه تحقیق و توسعه آشپزی",
+  "guide.groupTemplates.product.description": "طراحی و توسعه محصول برای ساخت محصولات با کیفیت بالا",
+  "guide.groupTemplates.product.members": [
+    {
+      "avatar": "🎨",
+      "backgroundColor": "#F6E8FF",
+      "systemRole": "شما طراح هستید و در طراحی انواع محصولات بر اساس نیازها مهارت دارید.",
+      "title": "طراح"
+    },
+    {
+      "avatar": "🧑",
+      "backgroundColor": "#E8F5FF",
+      "systemRole": "شما مدیر محصول هستید و مسئول برنامه‌ریزی، طراحی، توسعه و نگهداری محصولات برای تضمین کیفیت و تجربه کاربری هستید.",
+      "title": "مدیر محصول"
+    },
+    {
+      "avatar": "🧑‍💻",
+      "backgroundColor": "#E8F8F5",
+      "systemRole": "شما مهندس فول‌استک با تجربه هستید و در توسعه انواع محصولات بر اساس نیازها مهارت دارید.",
+      "title": "مهندس فول‌استک"
+    }
+  ],
+  "guide.groupTemplates.product.title": "گروه توسعه محصول",
+  "guide.groupTemplates.writing.description": "تولید و ویرایش محتوا برای نگارش متون با کیفیت بالا",
+  "guide.groupTemplates.writing.members": [
+    {
+      "avatar": "✍️",
+      "backgroundColor": "#F6E8FF",
+      "systemRole": "شما در نوشتن با سبک‌های مختلف مهارت دارید و می‌توانید لحن خود را برای مخاطبان و موقعیت‌های گوناگون تطبیق دهید.",
+      "title": "نویسنده محتوا"
+    },
+    {
+      "avatar": "🧑‍🎨",
+      "backgroundColor": "#E8F8F5",
+      "systemRole": "شما ویراستار هستید و مسئول بازخوانی، ویرایش و بهینه‌سازی متن برای تضمین دقت، روانی و حرفه‌ای بودن آن هستید.",
+      "title": "ویراستار"
+    }
+  ],
+  "guide.groupTemplates.writing.title": "محفل نویسندگان",
+  "guide.questions.moreBtn": "بیشتر بدانید",
+  "guide.questions.title": "می‌توانید بپرسید:",
+  "guide.welcome.afternoon": "عصر بخیر",
+  "guide.welcome.morning": "صبح بخیر",
+  "guide.welcome.night": "شب بخیر",
+  "guide.welcome.noon": "ظهر بخیر",
+  "header": "خوش آمدید",
+  "pickAgent": "یا از قالب‌های زیر یک عامل انتخاب کنید",
+  "skip": "رد کردن ساخت",
+  "slogan.desc1": "اینجا، عوامل همیشه آماده‌اند. ایده‌ها می‌توانند همکاری کنند، ثبت شوند و تکامل یابند.",
+  "slogan.desc2": "اولین عامل خود را بسازید و شروع کنیم~",
+  "slogan.title": "به خود ذهنی هوشمندتر ببخشید",
+  "welcomeMessages": {
+    "1": "خوش برگشتی 😊",
+    "10": "بیشترین بهره‌وری~",
+    "11": "در خدمت شما!",
+    "12": "ممنون که صبر کردی ☕",
+    "13": "بیا شروع کنیم ✅",
+    "14": "سؤال جدیدی داری؟",
+    "15": "امروز خیلی زحمت کشیدی!",
+    "16": "در حال بارگذاری الهام",
+    "17": "کاملاً شارژ شدم ⚡",
+    "18": "بزن بریم! 🚀",
+    "19": "افکارمون هماهنگه.",
+    "2": "سلام، من اینجام",
+    "20": "الهام در راهه",
+    "21": "منتظر فرمانت هستم",
+    "22": "بازگشت به حالت بهره‌وری بالا!",
+    "23": "در حالت آماده‌باش",
+    "24": "آماده برای چالش",
+    "25": "ایده‌های جدید در حال شکل‌گیری‌اند",
+    "26": "مسیر روشنه—بزن بریم!",
+    "27": "سیستم آنلاین، آماده کمک 💡",
+    "28": "در حال بارگذاری انرژی مثبت",
+    "29": "کنترل دست توئه، شروع کن 🎵",
+    "3": "همه چیز آماده‌ست!",
+    "30": "در حال افزایش بهره‌وری …",
+    "31": "اهداف امروز در مسیر 🎯",
+    "32": "بذار ایده‌هات بدرخشن ✨",
+    "33": "به‌روزرسانی وظایف کامل شد",
+    "34": "همه چیز آماده‌ست",
+    "35": "حالت شتاب فعال شد",
+    "36": "خب! شروع کنیم 😎",
+    "37": "منتظرت هستم",
+    "38": "همین‌طور ادامه بده!",
+    "39": "یادت نره استراحت کنی~ 💤",
+    "4": "دیدنت عالیه",
+    "5": "آماده‌ای شروع کنیم؟",
+    "6": "بذار امروز کمکت کنم",
+    "7": "به پیش برو!",
+    "8": "بزن بریم 💪",
+    "9": "بریم سر کار 🏃‍♂️"
   }
 }

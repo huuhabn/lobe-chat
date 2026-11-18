@@ -1,12 +1,6 @@
 import debug from 'debug';
 
-import type {
-  AgentState,
-  ContextProcessor,
-  PipelineContext,
-  PipelineResult,
-  ProcessorOptions,
-} from './types';
+import type { ContextProcessor, PipelineContext, PipelineResult, ProcessorOptions } from './types';
 import { PipelineError } from './types';
 
 const log = debug('context-engine:ContextEngine');
@@ -31,7 +25,6 @@ export class ContextEngine {
     this.processors = [...pipeline];
     this.options = {
       debug: false,
-      logger: console.log,
       ...options,
     };
   }
@@ -70,26 +63,16 @@ export class ContextEngine {
   /**
    * Execute pipeline processing
    */
-  async process(input: {
-    initialState: AgentState;
-    maxTokens: number;
-    messages?: Array<any>;
-    metadata?: Record<string, any>;
-    model: string;
-  }): Promise<PipelineResult> {
+  async process(input: { messages: Array<any> }): Promise<PipelineResult> {
     const startTime = Date.now();
     const processorDurations: Record<string, number> = {};
 
     // Create initial pipeline context
     let context: PipelineContext = {
-      initialState: input.initialState,
+      initialState: { messages: input.messages },
       isAborted: false,
-      messages: Array.isArray(input.messages) ? [...input.messages] : [],
-      metadata: {
-        maxTokens: input.maxTokens,
-        model: input.model,
-        ...input.metadata,
-      },
+      messages: [...input.messages],
+      metadata: {},
     };
 
     log('Starting pipeline processing');
@@ -110,6 +93,7 @@ export class ContextEngine {
 
         try {
           context = await processor.process(context);
+
           processedCount++;
 
           const duration = Date.now() - processorStartTime;
@@ -126,10 +110,17 @@ export class ContextEngine {
           processorDurations[processor.name] = duration;
 
           log('Processor', processor.name, 'execution failed:', error);
+          const cause = error instanceof Error ? error : new Error(String(error));
+
+          // Build a diagnostic message that includes the immediate cause so
+          // dashboard viewers can triage without raw stack access.
+          const causeSummary =
+            cause.message.length > 300 ? cause.message.slice(0, 300) + '…' : cause.message;
+
           throw new PipelineError(
-            `Processor [${processor.name}] execution failed`,
+            `Processor [${processor.name}] execution failed: ${causeSummary}`,
             processor.name,
-            error instanceof Error ? error : new Error(String(error)),
+            cause,
           );
         }
       }

@@ -1,26 +1,20 @@
-import { StateCreator } from 'zustand/vanilla';
+import { type StateCreator } from 'zustand/vanilla';
 
-import { ChatStore } from '@/store/chat/store';
+import { type ChatStore } from '@/store/chat/store';
+import { flattenActions } from '@/store/utils/flattenActions';
 
-import { ChatDallEAction, dalleSlice } from './dalle';
-import { ChatCodeInterpreterAction, codeInterpreterSlice } from './interpreter';
-import { LocalFileAction, localFileSlice } from './localFile';
-import { SearchAction, searchSlice } from './search';
+import { type SearchAction } from './search';
+import { SearchActionImpl } from './search';
 
-export interface ChatBuiltinToolAction
-  extends ChatDallEAction,
-    SearchAction,
-    LocalFileAction,
-    ChatCodeInterpreterAction {}
+export type ChatBuiltinToolAction = SearchAction;
 
 export const chatToolSlice: StateCreator<
   ChatStore,
   [['zustand/devtools', never]],
   [],
   ChatBuiltinToolAction
-> = (...params) => ({
-  ...dalleSlice(...params),
-  ...searchSlice(...params),
-  ...localFileSlice(...params),
-  ...codeInterpreterSlice(...params),
-});
+> = (
+  ...params: Parameters<
+    StateCreator<ChatStore, [['zustand/devtools', never]], [], ChatBuiltinToolAction>
+  >
+) => flattenActions<ChatBuiltinToolAction>([new SearchActionImpl(...params)]);

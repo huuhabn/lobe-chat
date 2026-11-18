@@ -24,7 +24,6 @@ export async function consumeStreamUntilDone(response: Response): Promise<void> 
 
   const reader = response.body.getReader();
   try {
-    // eslint-disable-next-line no-constant-condition
     while (true) {
       const { done } = await reader.read();
       if (done) break;
@@ -32,4 +31,17 @@ export async function consumeStreamUntilDone(response: Response): Promise<void> 
   } finally {
     reader.releaseLock();
   }
+}
+
+/**
+ * Answer a JSON-mode chat with the raw provider body. Usage callbacks only fire inside the
+ * stream transform, so drain it first; otherwise `onFinal` never reports usage and usage
+ * tracking (billing, tracing) silently sees nothing.
+ */
+export async function respondJsonAfterStream(
+  streamingResponse: Response,
+  body: unknown,
+): Promise<Response> {
+  await consumeStreamUntilDone(streamingResponse);
+  return Response.json(body);
 }

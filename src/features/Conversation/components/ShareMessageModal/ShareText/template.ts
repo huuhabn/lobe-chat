@@ -1,26 +1,14 @@
-import { template } from 'lodash-es';
+import { type UIChatMessage } from '@lobechat/types';
 
 import { LOADING_FLAT } from '@/const/message';
-import { ChatMessage } from '@/types/message';
-
-const markdownTemplate = template(
-  `<% messages.forEach(function(chat) { %>
-
-{{chat.content}}
-
-<% }); %>
-`,
-  {
-    evaluate: /<%([\S\s]+?)%>/g,
-    interpolate: /{{([\S\s]+?)}}/g,
-  },
-);
+import { normalizeThinkTags, processWithArtifact } from '@/features/Conversation/utils/markdown';
 
 interface MarkdownParams {
-  messages: ChatMessage[];
+  messages: UIChatMessage[];
 }
 
-export const generateMarkdown = ({ messages }: MarkdownParams) =>
-  markdownTemplate({
-    messages: messages.filter((m) => m.content !== LOADING_FLAT),
-  });
+export const generateMarkdown = ({ messages }: MarkdownParams): string =>
+  messages
+    .filter((m) => m.content !== LOADING_FLAT)
+    .map((message) => normalizeThinkTags(processWithArtifact(message.content)))
+    .join('\n\n');

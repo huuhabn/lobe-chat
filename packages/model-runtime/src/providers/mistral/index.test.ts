@@ -1,20 +1,8 @@
 // @vitest-environment node
-import { LobeOpenAICompatibleRuntime } from '@lobechat/model-runtime';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { testProvider } from '../../providerTestUtils';
+import type { LobeOpenAICompatibleRuntime } from '../../core/BaseAI';
 import { LobeMistralAI, params } from './index';
-
-testProvider({
-  provider: 'mistral',
-  defaultBaseURL: 'https://api.mistral.ai/v1',
-  chatModel: 'open-mistral-7b',
-  Runtime: LobeMistralAI,
-  chatDebugEnv: 'DEBUG_MISTRAL_CHAT_COMPLETION',
-  test: {
-    skipAPICall: true, // Mistral has custom payload handling (excludeUsage, temperature normalization)
-  },
-});
 
 // Mock the console.error to avoid polluting test output
 vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -106,11 +94,11 @@ describe('LobeMistralAI - custom features', () => {
       await instance.chat({
         messages: [{ content: 'Hello', role: 'user' }],
         model: 'open-mistral-7b',
-        temperature: 2.0,
+        temperature: 2,
       });
 
       expect(instance['client'].chat.completions.create).toHaveBeenCalledWith(
-        expect.objectContaining({ temperature: 1.0 }),
+        expect.objectContaining({ temperature: 1 }),
         expect.anything(),
       );
     });

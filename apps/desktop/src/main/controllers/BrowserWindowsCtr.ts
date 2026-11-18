@@ -1,55 +1,161 @@
-import { InterceptRouteParams } from '@lobechat/electron-client-ipc';
-import { extractSubPath, findMatchingRoute } from '~common/routes';
+import type {
+  FocusTopicPopupParams,
+  InterceptRouteParams,
+  OpenSettingsWindowOptions,
+  WindowMinimumSizeParams,
+  WindowSizeParams,
+} from '@lobechat/electron-client-ipc';
 
-import { AppBrowsersIdentifiers, BrowsersIdentifiers, WindowTemplateIdentifiers } from '@/appBrowsers';
-import { IpcClientEventSender } from '@/types/ipcClientEvent';
+import type { AppBrowsersIdentifiers, WindowTemplateIdentifiers } from '@/appBrowsers';
+import { getIpcContext } from '@/utils/ipc';
+import { findMatchingRoute } from '~common/routes';
 
-import { ControllerModule, ipcClientEvent, shortcut } from './index';
+import { ControllerModule, IpcMethod, shortcut } from './index';
 
 export default class BrowserWindowsCtr extends ControllerModule {
+  static override readonly groupName = 'windows';
+
   @shortcut('showApp')
-  async toggleMainWindow() {
+  toggleMainWindow() {
     const mainWindow = this.app.browserManager.getMainWindow();
     mainWindow.toggleVisible();
   }
 
-  @ipcClientEvent('openSettingsWindow')
-  async openSettingsWindow(tab?: string) {
-    console.log('[BrowserWindowsCtr] Received request to open settings window', tab);
+  @shortcut('quickComposer')
+  async openQuickComposer() {
+    await this.app.screenCaptureManager.startSession();
+  }
+
+  @shortcut('quickChat')
+  openQuickChat() {
+    this.app.browserManager.openQuickChatPopup();
+  }
+
+  @IpcMethod()
+  async openSettingsWindow(options?: string | OpenSettingsWindowOptions) {
+    const normalizedOptions: OpenSettingsWindowOptions =
+      typeof options === 'string' || options === undefined
+        ? { tab: typeof options === 'string' ? options : undefined }
+        : options;
+
+    console.info('[BrowserWindowsCtr] Received request to open settings', normalizedOptions);
 
     try {
-      await this.app.browserManager.showSettingsWindowWithTab(tab);
+      let fullPath: string;
+
+      // If direct path is provided, use it directly
+      if (normalizedOptions.path) {
+        fullPath = normalizedOptions.path;
+      } else {
+        // Legacy support for tab and searchParams
+        const tab = normalizedOptions.tab;
+        fullPath = tab ? `/settings/${tab}` : '/settings/common';
+      }
+
+      const mainWindow = this.app.browserManager.getMainWindow();
+      mainWindow.show();
+      mainWindow.broadcast('navigate', { path: fullPath });
 
       return { success: true };
     } catch (error) {
-      console.error('[BrowserWindowsCtr] Failed to open settings window:', error);
+      console.error('[BrowserWindowsCtr] Failed to open settings:', error);
       return { error: error.message, success: false };
     }
   }
 
-  @ipcClientEvent('closeWindow')
-  closeWindow(data: undefined, sender: IpcClientEventSender) {
-    this.app.browserManager.closeWindow(sender.identifier);
+  @IpcMethod()
+  closeWindow() {
+    this.withSenderIdentifier((identifier) => {
+      this.app.browserManager.closeWindow(identifier);
+    });
   }
 
-  @ipcClientEvent('minimizeWindow')
-  minimizeWindow(data: undefined, sender: IpcClientEventSender) {
-    this.app.browserManager.minimizeWindow(sender.identifier);
+  @IpcMethod()
+  minimizeWindow() {
+    this.withSenderIdentifier((identifier) => {
+      this.app.browserManager.minimizeWindow(identifier);
+    });
   }
 
-  @ipcClientEvent('maximizeWindow')
-  maximizeWindow(data: undefined, sender: IpcClientEventSender) {
-    this.app.browserManager.maximizeWindow(sender.identifier);
+  @IpcMethod()
+  maximizeWindow() {
+    this.withSenderIdentifier((identifier) => {
+      this.app.browserManager.maximizeWindow(identifier);
+    });
+  }
+
+  @IpcMethod()
+  isWindowMaximized() {
+    return this.withSenderIdentifier((identifier) => {
+      return this.app.browserManager.isWindowMaximized(identifier);
+    });
+  }
+
+  @IpcMethod()
+  isWindowFullScreen() {
+    return this.withSenderIdentifier((identifier) => {
+      return this.app.browserManager.isWindowFullScreen(identifier);
+    });
+  }
+
+  @IpcMethod()
+  setWindowAlwaysOnTop(flag: boolean) {
+    this.withSenderIdentifier((identifier) => {
+      this.app.browserManager.setWindowAlwaysOnTop(identifier, flag);
+    });
+  }
+
+  @IpcMethod()
+  isWindowAlwaysOnTop() {
+    return this.withSenderIdentifier((identifier) => {
+      return this.app.browserManager.isWindowAlwaysOnTop(identifier);
+    });
+  }
+
+  @IpcMethod()
+  listTopicPopups() {
+    return this.app.browserManager.listTopicPopups();
+  }
+
+  @IpcMethod()
+  focusTopicPopup(params: FocusTopicPopupParams) {
+    return this.app.browserManager.focusTopicPopup(params.identifier);
+  }
+
+  @IpcMethod()
+  setWindowSize(params: WindowSizeParams) {
+    this.withSenderIdentifier((identifier) => {
+      this.app.browserManager.setWindowSize(identifier, params);
+    });
+  }
+
+  @IpcMethod()
+  setWindowMinimumSize(params: WindowMinimumSizeParams) {
+    this.withSenderIdentifier((identifier) => {
+      const currentSize = this.app.browserManager.getWindowSize(identifier);
+      const nextWindowSize = {
+        ...currentSize,
+      };
+      if (params.height) {
+        nextWindowSize.height = Math.max(currentSize.height, params.height);
+      }
+      if (params.width) {
+        nextWindowSize.width = Math.max(currentSize.width, params.width);
+      }
+
+      this.app.browserManager.setWindowSize(identifier, nextWindowSize);
+      this.app.browserManager.setWindowMinimumSize(identifier, params);
+    });
   }
 
   /**
    * Handle route interception requests
    * Responsible for handling route interception requests from the renderer process
    */
-  @ipcClientEvent('interceptRoute')
+  @IpcMethod()
   async interceptRoute(params: InterceptRouteParams) {
     const { path, source } = params;
-    console.log(
+    console.info(
       `[BrowserWindowsCtr] Received route interception request: ${path}, source: ${source}`,
     );
 
@@ -58,37 +164,23 @@ export default class BrowserWindowsCtr extends ControllerModule {
 
     // If no matching route found, return not intercepted
     if (!matchedRoute) {
-      console.log(`[BrowserWindowsCtr] No matching route configuration found: ${path}`);
+      console.info(`[BrowserWindowsCtr] No matching route configuration found: ${path}`);
       return { intercepted: false, path, source };
     }
 
-    console.log(
+    console.info(
       `[BrowserWindowsCtr] Intercepted route: ${path}, target window: ${matchedRoute.targetWindow}`,
     );
 
     try {
-      if (matchedRoute.targetWindow === BrowsersIdentifiers.settings) {
-        const subPath = extractSubPath(path, matchedRoute.pathPrefix);
+      await this.openTargetWindow(matchedRoute.targetWindow as AppBrowsersIdentifiers);
 
-        await this.app.browserManager.showSettingsWindowWithTab(subPath);
-
-        return {
-          intercepted: true,
-          path,
-          source,
-          subPath,
-          targetWindow: matchedRoute.targetWindow,
-        };
-      } else {
-        await this.openTargetWindow(matchedRoute.targetWindow as AppBrowsersIdentifiers);
-
-        return {
-          intercepted: true,
-          path,
-          source,
-          targetWindow: matchedRoute.targetWindow,
-        };
-      }
+      return {
+        intercepted: true,
+        path,
+        source,
+        targetWindow: matchedRoute.targetWindow,
+      };
     } catch (error) {
       console.error('[BrowserWindowsCtr] Error while processing route interception:', error);
       return {
@@ -103,19 +195,30 @@ export default class BrowserWindowsCtr extends ControllerModule {
   /**
    * Create a new multi-instance window
    */
-  @ipcClientEvent('createMultiInstanceWindow')
+  @IpcMethod()
   async createMultiInstanceWindow(params: {
-    templateId: WindowTemplateIdentifiers;
+    inheritCurrentWindowSize?: boolean;
     path: string;
+    templateId: WindowTemplateIdentifiers;
     uniqueId?: string;
   }) {
     try {
-      console.log('[BrowserWindowsCtr] Creating multi-instance window:', params);
+      console.info('[BrowserWindowsCtr] Creating multi-instance window:', params);
+
+      const inheritedWindowSize = params.inheritCurrentWindowSize
+        ? this.withSenderIdentifier((identifier) => {
+            const currentBounds = this.app.browserManager.getWindowSize(identifier);
+            if (!currentBounds) return undefined;
+
+            return { height: currentBounds.height, width: currentBounds.width };
+          })
+        : undefined;
 
       const result = this.app.browserManager.createMultiInstanceWindow(
         params.templateId,
         params.path,
         params.uniqueId,
+        inheritedWindowSize,
       );
 
       // Show the window
@@ -137,7 +240,7 @@ export default class BrowserWindowsCtr extends ControllerModule {
   /**
    * Get all windows by template
    */
-  @ipcClientEvent('getWindowsByTemplate')
+  @IpcMethod()
   async getWindowsByTemplate(templateId: string) {
     try {
       const windowIds = this.app.browserManager.getWindowsByTemplate(templateId);
@@ -157,7 +260,7 @@ export default class BrowserWindowsCtr extends ControllerModule {
   /**
    * Close all windows by template
    */
-  @ipcClientEvent('closeWindowsByTemplate')
+  @IpcMethod()
   async closeWindowsByTemplate(templateId: string) {
     try {
       this.app.browserManager.closeWindowsByTemplate(templateId);
@@ -178,5 +281,13 @@ export default class BrowserWindowsCtr extends ControllerModule {
     // Ensure the window can always be created or reopened
     const browser = this.app.browserManager.retrieveByIdentifier(targetWindow);
     browser.show();
+  }
+
+  private withSenderIdentifier<T>(fn: (identifier: string) => T): T | undefined {
+    const context = getIpcContext();
+    if (!context) return undefined;
+    const identifier = this.app.browserManager.getIdentifierByWebContents(context.sender);
+    if (!identifier) return undefined;
+    return fn(identifier);
   }
 }

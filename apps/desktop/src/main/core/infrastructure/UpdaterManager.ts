@@ -1,134 +1,267 @@
-import log from 'electron-log';
-import { autoUpdater } from 'electron-updater';
+import type {
+  ProgressInfo,
+  UpdateChannel,
+  UpdateInfo,
+  UpdaterStage,
+  UpdaterState,
+} from '@lobechat/electron-client-ipc';
+import { app as electronApp, BrowserWindow } from 'electron';
+import semver from 'semver';
 
-import { isDev } from '@/const/env';
-import { UPDATE_CHANNEL as channel, updaterConfig } from '@/modules/updater/configs';
+import { isDev, isWindows } from '@/const/env';
+import { UPDATE_CHANNEL, UPDATE_SERVER_URL, updaterConfig } from '@/modules/updater/configs';
+import { createUpdateEngine, type UpdateEngine } from '@/modules/updater/engine';
+import { extractRestoreRoute } from '@/modules/updater/utils';
 import { createLogger } from '@/utils/logger';
 
 import type { App as AppCore } from '../App';
 
-// Create logger
 const logger = createLogger('core:UpdaterManager');
+
+/**
+ * How long to wait for electron-updater to take the process down after
+ * `quitAndInstall()`. A Linux package install runs `pkexec`/`sudo` through
+ * `spawnSync`, so this timer cannot fire while the installer is still working —
+ * it only fires when the hand-off failed outright.
+ */
+const INSTALL_HANDOFF_TIMEOUT = 60 * 1000;
 
 export class UpdaterManager {
   private app: AppCore;
   private checking: boolean = false;
   private downloading: boolean = false;
   private updateAvailable: boolean = false;
-  private isManualCheck: boolean = false;
+  private currentChannel: UpdateChannel = UPDATE_CHANNEL;
+  private engine?: UpdateEngine;
+  /** Incremented on each channel switch to invalidate in-flight checks */
+  private checkGeneration: number = 0;
+  /** Generation at the start of the current active check */
+  private activeGeneration: number = 0;
+  /** Whether a recheck is needed after the current check completes */
+  private pendingRecheck: boolean = false;
+  /**
+   * Version the user acknowledged with "install later" in the current process.
+   * While set, equal-version update-available/downloaded events are processed
+   * for menu state but never re-broadcast to the renderer, so the prompt does
+   * not reappear within the session. Cleared when a strictly newer version
+   * arrives (or on channel switch).
+   */
+  private installLaterVersion: string | null = null;
+
+  private stage: UpdaterStage = 'idle';
+  private latestUpdateInfo: UpdateInfo | null = null;
+  private latestProgress: ProgressInfo | null = null;
+  private latestError: string | null = null;
 
   constructor(app: AppCore) {
     this.app = app;
-
-    // 设置日志
-    log.transports.file.level = 'info';
-    autoUpdater.logger = log;
-
-    logger.debug(`[Updater] Log file should be at: ${log.transports.file.getFile().path}`); // 打印路径
   }
 
   get mainWindow() {
     return this.app.browserManager.getMainWindow();
   }
 
+  public getUpdaterState(): UpdaterState {
+    const state: UpdaterState = { stage: this.stage };
+    if (this.latestProgress) state.progress = this.latestProgress;
+    if (this.latestUpdateInfo) state.updateInfo = this.latestUpdateInfo;
+    if (this.latestError) state.errorMessage = this.latestError;
+    return state;
+  }
+
+  private setStage(
+    stage: UpdaterStage,
+    opts?: {
+      error?: string;
+      progress?: ProgressInfo;
+      rebuildMenu?: boolean;
+      updateInfo?: UpdateInfo;
+    },
+  ) {
+    this.stage = stage;
+    if (opts?.updateInfo !== undefined) this.latestUpdateInfo = opts.updateInfo;
+    if (opts?.progress !== undefined) this.latestProgress = opts.progress;
+    if (opts?.error !== undefined) this.latestError = opts.error;
+
+    // Clear irrelevant fields on stage transitions
+    if (stage === 'idle' || stage === 'checking') {
+      this.latestProgress = null;
+      this.latestError = null;
+    }
+    if (stage !== 'error') {
+      this.latestError = null;
+    }
+
+    this.mainWindow.broadcast('updaterStateChanged', this.getUpdaterState());
+
+    if (opts?.rebuildMenu !== false) {
+      this.app.menuManager.rebuildAppMenu();
+    }
+  }
+
   public initialize = async () => {
     logger.debug('Initializing UpdaterManager');
-    // If updates are disabled and in production environment, don't initialize updates
-    if (!updaterConfig.enableAppUpdate && !isDev) {
+
+    if (!updaterConfig.enableAppUpdate) {
       logger.info('App updates are disabled, skipping updater initialization');
       return;
     }
 
-    // Configure autoUpdater
-    autoUpdater.autoDownload = false; // Set to false, we'll control downloads manually
-    autoUpdater.autoInstallOnAppQuit = false;
+    // Read persisted channel from store (defaults to build-time UPDATE_CHANNEL)
+    this.currentChannel = this.app.storeManager.get('updateChannel') ?? UPDATE_CHANNEL;
 
-    autoUpdater.channel = channel;
-    autoUpdater.allowPrerelease = channel !== 'stable';
-    autoUpdater.allowDowngrade = false;
-
-    // Enable test mode in development environment
-    if (isDev) {
-      logger.info(`Running in dev mode, forcing update check, channel: ${autoUpdater.channel}`);
-      // Allow testing updates in development environment
-      autoUpdater.forceDevUpdateConfig = true;
+    try {
+      this.engine = await createUpdateEngine(this.currentChannel);
+      this.engine.configure(this.currentChannel);
+    } catch (error) {
+      logger.error('Failed to initialize updater:', error);
+      this.setStage('error', { error: error instanceof Error ? error.message : String(error) });
+      return;
     }
-
-    // Register events
     this.registerEvents();
 
-    // If auto-check for updates is configured, set up periodic checks
     if (updaterConfig.app.autoCheckUpdate) {
-      // Delay update check by 1 minute after startup to avoid network instability
       setTimeout(() => this.checkForUpdates(), 60 * 1000);
-
-      // Set up periodic checks
       setInterval(() => this.checkForUpdates(), updaterConfig.app.checkUpdateInterval);
     }
-
-    // Log the channel and allowPrerelease values
-    logger.debug(
-      `Initialized with channel: ${autoUpdater.channel}, allowPrerelease: ${autoUpdater.allowPrerelease}`,
-    );
 
     logger.info('UpdaterManager initialization completed');
   };
 
   /**
-   * Check for updates
-   * @param manual whether this is a manual check for updates
+   * Switch to a different update channel at runtime
    */
-  public checkForUpdates = async ({ manual = false }: { manual?: boolean } = {}) => {
-    if (this.checking || this.downloading) return;
+  public switchChannel = (channel: UpdateChannel) => {
+    logger.info(`Switching update channel: ${this.currentChannel} -> ${channel}`);
 
-    this.checking = true;
-    this.isManualCheck = manual;
-    logger.info(`${manual ? 'Manually checking' : 'Auto checking'} for updates...`);
+    this.currentChannel = channel;
+    this.installLaterVersion = null;
+    this.updateAvailable = false;
+    this.latestUpdateInfo = null;
 
-    // If manual check, notify renderer process about check start
-    if (manual) {
-      this.mainWindow.broadcast('manualUpdateCheckStart');
-    }
+    this.mainWindow.broadcast('updateChannelChanged', channel);
 
-    try {
-      await autoUpdater.checkForUpdates();
-    } catch (error) {
-      logger.error('Error checking for updates:', error.message);
-
-      // If manual check, notify renderer process about check error
-      if (manual) {
-        this.mainWindow.broadcast('updateError', (error as Error).message);
-      }
-    } finally {
-      this.checking = false;
+    // Invalidate any in-flight check and schedule a recheck
+    this.checkGeneration++;
+    if (this.checking || this.downloading) {
+      this.pendingRecheck = true;
+    } else {
+      this.checkForUpdates();
     }
   };
 
   /**
-   * Download update
-   * @param manual whether this is a manual download
+   * Check for updates
    */
-  public downloadUpdate = async (manual: boolean = false) => {
-    if (this.downloading || !this.updateAvailable) return;
+  public checkForUpdates = async ({ manual = false }: { manual?: boolean } = {}) => {
+    if (manual) void this.app.coreUpdateManager.checkForUpdates({ manual: true });
+    if (!this.engine || this.checking || this.downloading) return;
 
-    this.downloading = true;
-    logger.info(`${manual ? 'Manually downloading' : 'Auto downloading'} update...`);
-
-    // If manual download or manual check, notify renderer process about download start
-    if (manual || this.isManualCheck) {
-      this.mainWindow.broadcast('updateDownloadStart');
+    // electron-updater has no updater implementation for every Linux
+    // distribution format we ship: snap refreshes through snapd, the `tar.gz`
+    // archive has no installer at all, and AppImageUpdater needs the APPIMAGE
+    // env only the AppImage runtime exports. For those, `checkForUpdates()`
+    // resolves `null` without emitting a single event, which would leave the
+    // UI spinning on "checking" forever. Say so instead.
+    if (!this.engine.isActive()) {
+      logger.warn(
+        'Updater is inactive for this installation (unsupported distribution format or unpacked build) — in-app update is unavailable',
+      );
+      this.setStage('unsupported');
+      return;
     }
 
+    this.checking = true;
+    this.activeGeneration = this.checkGeneration;
+
+    logger.info(
+      `${manual ? 'Manually checking' : 'Auto checking'} for updates... (gen=${this.activeGeneration})`,
+    );
+
+    this.setStage('checking');
+
     try {
-      await autoUpdater.downloadUpdate();
+      this.engine.configure(this.currentChannel);
+      await this.engine.checkForUpdates();
+    } catch (error) {
+      if (this.isStaleCheck()) return;
+
+      const message = error instanceof Error ? error.message : String(error);
+
+      if (this.isMissingUpdateManifestError(error)) {
+        logger.warn('[Updater] Update manifest not ready yet, treating as no update:', message);
+        this.setStage('latest');
+        setTimeout(() => {
+          if (this.stage === 'latest') this.setStage('idle');
+        }, 5000);
+        return;
+      }
+
+      logger.error('Error checking for updates:', message);
+      this.setStage('error', { error: message });
+      setTimeout(() => {
+        if (this.stage === 'error') this.setStage('idle');
+      }, 3000);
+    } finally {
+      this.checking = false;
+      if (this.pendingRecheck) {
+        this.pendingRecheck = false;
+        this.checkForUpdates();
+      }
+    }
+  };
+
+  /**
+   * Check for updates because someone explicitly asked to update this app from
+   * another device. An earlier local "install later" would keep the found
+   * update from downloading, so the explicit request overrides it.
+   */
+  public checkForUpdatesOnRequest = () => {
+    if (this.installLaterVersion) {
+      logger.info(
+        `Remote update requested; clearing install-later for v${this.installLaterVersion}`,
+      );
+      this.installLaterVersion = null;
+    }
+
+    void this.checkForUpdates({ manual: true });
+  };
+
+  /**
+   * Download update
+   */
+  public downloadUpdate = async () => {
+    if (!this.engine || this.downloading || !this.updateAvailable) return;
+
+    this.downloading = true;
+    logger.info('Downloading update...');
+
+    this.setStage('downloading');
+
+    try {
+      await this.engine.downloadUpdate();
     } catch (error) {
       this.downloading = false;
       logger.error('Error downloading update:', error);
+      this.setStage('error', { error: (error as Error).message });
+      setTimeout(() => {
+        if (this.stage === 'error') this.setStage('idle');
+      }, 3000);
+    }
+  };
 
-      // If manual download or manual check, notify renderer process about download error
-      if (manual || this.isManualCheck) {
-        this.mainWindow.broadcast('updateError', (error as Error).message);
-      }
+  captureRestoreRoute = () => {
+    try {
+      const url = this.mainWindow.webContents?.getURL();
+      if (!url) return;
+
+      const route = extractRestoreRoute(url);
+      if (!route) return;
+
+      this.app.storeManager.set('pendingRestoreRoute', route);
+      logger.info(`Captured route for restore after update restart: ${route}`);
+    } catch (error) {
+      logger.warn('Failed to capture route for restore after update restart:', error);
     }
   };
 
@@ -136,13 +269,48 @@ export class UpdaterManager {
    * Install update immediately
    */
   public installNow = () => {
+    if (!this.engine || !this.updateAvailable) return;
     logger.info('Installing update now...');
 
-    // Mark application for exit
-    this.app.isQuiting = true;
+    this.captureRestoreRoute();
 
-    // Delay installation by 1 second to ensure window is closed
-    autoUpdater.quitAndInstall();
+    this.app.isQuiting = true;
+    // Suppress the `window-all-closed` quit in App.ts: on Linux it fires as soon
+    // as the loop below closes the last window and would tear the process down
+    // before the deferred quitAndInstall() runs.
+    this.app.isInstallingUpdate = true;
+
+    logger.info('Closing all windows before update installation...');
+    if (!isWindows) {
+      const allWindows = BrowserWindow.getAllWindows();
+      allWindows.forEach((window: any) => {
+        if (!window.isDestroyed()) {
+          window.close();
+        }
+      });
+    }
+
+    logger.info('Releasing single instance lock...');
+    electronApp.releaseSingleInstanceLock();
+
+    setTimeout(() => {
+      const engine = this.engine;
+      logger.info(`Calling ${engine?.kind} quitAndInstall...`);
+      engine?.quitAndInstall();
+
+      // electron-updater's quitAndInstall() only quits once the installer took
+      // over. If it bailed out (no installer path, package manager missing,
+      // sudo prompt refused) we would be left with a window-less process that
+      // never quits, because window-all-closed is suppressed above. Quit on our
+      // own in that case; after a successful hand-off the process is already
+      // gone. Sparkle owns its own termination and may still be prompting.
+      if (engine?.kind !== 'electron-updater') return;
+      setTimeout(() => {
+        logger.warn('quitAndInstall did not end the process, quitting explicitly');
+        this.app.isInstallingUpdate = false;
+        electronApp.quit();
+      }, INSTALL_HANDOFF_TIMEOUT);
+    }, 100);
   };
 
   /**
@@ -151,25 +319,25 @@ export class UpdaterManager {
   public installLater = () => {
     logger.info('Update will be installed on next restart');
 
-    // Mark for installation on next launch, but don't exit application
-    autoUpdater.autoInstallOnAppQuit = true;
-
-    // Notify renderer process that update will be installed on next launch
+    if (!this.engine) return;
+    this.engine.installOnQuit();
+    if (this.latestUpdateInfo?.version) {
+      this.installLaterVersion = this.latestUpdateInfo.version;
+      logger.info(`Suppressing further prompts for version ${this.installLaterVersion}`);
+    }
     this.mainWindow.broadcast('updateWillInstallLater');
   };
 
   /**
    * Test mode: Simulate update available
-   * Only for use in development environment
    */
   public simulateUpdateAvailable = () => {
     if (!isDev) return;
 
     logger.info('Simulating update available...');
 
-    const mainWindow = this.mainWindow;
-    // Simulate a new version update
-    const mockUpdateInfo = {
+    const mockUpdateInfo: UpdateInfo = {
+      kind: 'app',
       releaseDate: new Date().toISOString(),
       releaseNotes: ` #### Version 1.0.0 Release Notes
 - Added some great new features
@@ -180,83 +348,64 @@ export class UpdaterManager {
       version: '1.0.0',
     };
 
-    // Set update available state
     this.updateAvailable = true;
+    this.setStage('checking');
 
-    // Notify renderer process
-    if (this.isManualCheck) {
-      mainWindow.broadcast('manualUpdateAvailable', mockUpdateInfo);
-    } else {
-      // In auto-check mode, directly simulate download
+    setTimeout(() => {
+      this.setStage('downloading', { updateInfo: mockUpdateInfo });
       this.simulateDownloadProgress();
-    }
+    }, 1000);
   };
 
   /**
    * Test mode: Simulate update downloaded
-   * Only for use in development environment
    */
   public simulateUpdateDownloaded = () => {
     if (!isDev) return;
 
     logger.info('Simulating update downloaded...');
 
-    const mainWindow = this.app.browserManager.getMainWindow();
-    if (mainWindow) {
-      // Simulate a new version update
-      const mockUpdateInfo = {
-        releaseDate: new Date().toISOString(),
-        releaseNotes: ` #### Version 1.0.0 Release Notes
+    const mockUpdateInfo: UpdateInfo = {
+      kind: 'app',
+      releaseDate: new Date().toISOString(),
+      releaseNotes: ` #### Version 1.0.0 Release Notes
 - Added some great new features
 - Fixed bugs affecting usability
 - Optimized overall application performance
 - Updated dependency libraries
 `,
-        version: '1.0.0',
-      };
+      version: '1.0.0',
+    };
 
-      // Set download state
-      this.downloading = false;
-
-      // Notify renderer process
-      mainWindow.broadcast('updateDownloaded', mockUpdateInfo);
-    }
+    this.downloading = false;
+    this.setStage('downloaded', { updateInfo: mockUpdateInfo });
+    this.mainWindow.broadcast('updateReady', mockUpdateInfo);
   };
 
   /**
    * Test mode: Simulate update download progress
-   * Only for use in development environment
    */
   public simulateDownloadProgress = () => {
     if (!isDev) return;
 
     logger.info('Simulating download progress...');
 
-    const mainWindow = this.app.browserManager.getMainWindow();
-
-    // Set download state
     this.downloading = true;
 
-    // Only broadcast download start event if manual check
-    if (this.isManualCheck) {
-      mainWindow.broadcast('updateDownloadStart');
-    }
-
-    // Simulate progress updates
     let progress = 0;
     const interval = setInterval(() => {
       progress += 10;
 
-      if (
-        progress <= 100 && // Only broadcast download progress if manual check
-        this.isManualCheck
-      ) {
-        mainWindow.broadcast('updateDownloadProgress', {
+      if (progress <= 100) {
+        const progressInfo: ProgressInfo = {
           bytesPerSecond: 1024 * 1024,
-          percent: progress, // 1MB/s
-          total: 1024 * 1024 * 100, // 100MB
-          transferred: 1024 * 1024 * progress, // Progress * 1MB
-        });
+          percent: progress,
+          total: 1024 * 1024 * 100,
+          transferred: 1024 * 1024 * progress,
+        };
+        this.latestProgress = progressInfo;
+        this.mainWindow.broadcast('updaterStateChanged', this.getUpdaterState());
+        this.mainWindow.broadcast('updateDownloadProgress', progressInfo);
       }
 
       if (progress >= 100) {
@@ -267,55 +416,154 @@ export class UpdaterManager {
   };
 
   private registerEvents() {
-    logger.debug('Registering updater events');
+    if (this.engine) this.bindEngine(this.engine);
+  }
 
-    autoUpdater.on('checking-for-update', () => {
+  private bindEngine(engine: UpdateEngine) {
+    engine.on('checking-for-update', () => {
       logger.info('[Updater] Checking for update...');
+      logger.info('[Updater] Current channel:', this.currentChannel);
     });
 
-    autoUpdater.on('update-available', (info) => {
-      logger.info(`Update available: ${info.version}`);
+    engine.on('update-available', (info) => {
+      logger.info(
+        `Update available: ${info.version} (activeGen=${this.activeGeneration}, currentGen=${this.checkGeneration})`,
+      );
+
+      if (this.isStaleCheck()) return;
+
+      this.maybeClearInstallLaterGuard(info.version);
+
       this.updateAvailable = true;
 
-      if (this.isManualCheck) {
-        this.mainWindow.broadcast('manualUpdateAvailable', info);
-      } else {
-        // If it's an automatic check, start downloading automatically
-        logger.info('Auto check found update, starting download automatically...');
-        this.downloadUpdate();
+      if (this.installLaterVersion) {
+        logger.info(
+          `Skipping auto-download — install-later acknowledged for v${this.installLaterVersion}, incoming v${info.version}`,
+        );
+        // Finish the check with the cached update still installable, without reopening its prompt.
+        this.setStage('downloaded');
+        return;
       }
+
+      // Always auto-download
+      logger.info('Update found, starting download automatically...');
+      this.setStage('downloading', { updateInfo: { ...info, kind: 'app' } });
+      this.downloadUpdate();
     });
 
-    autoUpdater.on('update-not-available', (info) => {
+    engine.on('update-not-available', (info) => {
+      if (this.isStaleCheck()) return;
       logger.info(`Update not available. Current: ${info.version}`);
-      if (this.isManualCheck) {
-        this.mainWindow.broadcast('manualUpdateNotAvailable', info);
-      }
+
+      this.setStage('latest');
+      setTimeout(() => {
+        if (this.stage === 'latest') this.setStage('idle');
+      }, 5000);
     });
 
-    autoUpdater.on('error', (err) => {
+    engine.on('error', async (err) => {
+      this.downloading = false;
+      if (this.isStaleCheck()) return;
+      const message = err instanceof Error ? err.message : String(err);
+
+      if (this.isMissingUpdateManifestError(err)) {
+        logger.warn('[Updater] Update manifest not ready yet, skipping error handling:', message);
+        this.setStage('latest');
+        setTimeout(() => {
+          if (this.stage === 'latest') this.setStage('idle');
+        }, 5000);
+        return;
+      }
+
       logger.error('Error in auto-updater:', err);
-      if (this.isManualCheck) {
-        this.mainWindow.broadcast('updateError', err.message);
-      }
+      logger.error('[Updater Error Context] currentChannel:', this.currentChannel);
+      logger.error('[Updater Error Context] UPDATE_SERVER_URL:', UPDATE_SERVER_URL || '(not set)');
+
+      this.mainWindow.broadcast('updateError', err.message);
+      this.setStage('error', { error: message });
+      setTimeout(() => {
+        if (this.stage === 'error') this.setStage('idle');
+      }, 3000);
     });
 
-    autoUpdater.on('download-progress', (progressObj) => {
+    engine.on('download-progress', (progressObj) => {
+      if (this.isStaleCheck()) return;
       logger.debug(
         `Download speed: ${progressObj.bytesPerSecond} - Downloaded ${progressObj.percent}% (${progressObj.transferred}/${progressObj.total})`,
       );
-      if (this.isManualCheck) {
-        this.mainWindow.broadcast('updateDownloadProgress', progressObj);
-      }
+      this.latestProgress = progressObj;
+      // Broadcast state without menu rebuild (too frequent)
+      this.mainWindow.broadcast('updaterStateChanged', this.getUpdaterState());
+      this.mainWindow.broadcast('updateDownloadProgress', progressObj);
     });
 
-    autoUpdater.on('update-downloaded', (info) => {
+    engine.on('update-downloaded', (info) => {
       logger.info(`Update downloaded: ${info.version}`);
       this.downloading = false;
-      // Always notify about downloaded update
-      this.mainWindow.broadcast('updateDownloaded', info);
-    });
+      if (this.isStaleCheck()) return;
 
-    logger.debug('Updater events registered');
+      this.maybeClearInstallLaterGuard(info.version);
+
+      const updateInfo = { ...info, kind: 'app' } satisfies UpdateInfo;
+      this.setStage('downloaded', { updateInfo });
+
+      if (this.installLaterVersion) {
+        logger.info(
+          `Not broadcasting updateReady — install-later acknowledged for v${this.installLaterVersion}, incoming v${info.version}`,
+        );
+        return;
+      }
+
+      this.mainWindow.broadcast('updateReady', updateInfo);
+    });
+  }
+
+  /**
+   * Clear the install-later guard when a strictly newer version arrives.
+   * Equal or older versions keep the guard so the prompt stays suppressed.
+   */
+  private maybeClearInstallLaterGuard(incomingVersion: string | undefined) {
+    if (!this.installLaterVersion || !incomingVersion) return;
+    try {
+      if (semver.gt(incomingVersion, this.installLaterVersion)) {
+        logger.info(
+          `Clearing install-later guard (was v${this.installLaterVersion}, incoming v${incomingVersion})`,
+        );
+        this.installLaterVersion = null;
+      }
+    } catch (error) {
+      logger.warn('Failed to compare versions for install-later guard:', error);
+    }
+  }
+
+  /** Check if the current active check has been superseded by a channel switch */
+  private isStaleCheck(): boolean {
+    if (this.activeGeneration !== this.checkGeneration) {
+      logger.info(
+        `Discarding stale check result (activeGen=${this.activeGeneration}, currentGen=${this.checkGeneration})`,
+      );
+      return true;
+    }
+    return false;
+  }
+
+  private isMissingUpdateManifestError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error ?? '');
+    if (!message) return false;
+
+    if (!/cannot find/i.test(message)) return false;
+    if (!/\b404\b/.test(message)) return false;
+
+    const manifestMatch = message.match(/\b(?:latest|stable|nightly|canary)(?:-[\da-z]+)?\.yml\b/i);
+    return Boolean(manifestMatch);
+  }
+
+  private getCurrentUpdateInfo(): UpdateInfo {
+    const version = electronApp.getVersion();
+    return {
+      kind: 'app',
+      releaseDate: new Date().toISOString(),
+      version,
+    };
   }
 }

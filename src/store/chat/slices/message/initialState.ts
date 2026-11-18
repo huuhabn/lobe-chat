@@ -1,76 +1,55 @@
-import { ChatGroupAgentItem, ChatGroupItem } from '@/database/schemas/chatGroup';
-import { ChatMessage } from '@/types/message';
+import { type UIChatMessage } from '@lobechat/types';
 
-import type { SupervisorTodoItem } from './supervisor';
+import { type ChatGroupAgentItem } from '@/database/schemas/chatGroup';
+import { createReplicaState, type ReplicaState } from '@/libs/replica';
+import { type ConversationMessagePage } from '@/services/message/replica';
+
+import { type TranscriptPaging } from './transcript/lens';
 
 export interface ChatMessageState {
+  activeAgentId: string;
   /**
-   * @title 当前活动的会话
-   * @description 当前正在编辑或查看的会话
+   * Raw messages from database (flat structure)
    */
-  activeId: string;
-  /**
-   * Type of the currently active session ('agent' | 'group')
-   * Derived from session.type, used for caching to avoid repeated lookups
-   */
-  activeSessionType?: 'agent' | 'group';
+  dbMessagesMap: Record<string, UIChatMessage[]>;
   /**
    * Group agents maps by group ID
    */
   groupAgentMaps: Record<string, ChatGroupAgentItem[]>;
-  /**
-   * Group data maps by group ID
-   */
-  groupMaps: Record<string, ChatGroupItem>;
-  /**
-   * Groups initialization status
-   */
-  groupsInit: boolean;
   isCreatingMessage: boolean;
   /**
    * is the message is editing
    */
   messageEditingIds: string[];
   /**
-   * is the message is creating or updating in the service
+   * Paging bookkeeping of each transcript entry (cursor of the next older
+   * page, loaded depth), keyed by the transcript entry key. The rows are the
+   * entry's `dbMessagesMap` bucket.
    */
-  messageLoadingIds: string[];
+  messagePagingMap: Record<string, TranscriptPaging>;
+  /**
+   * Replica bookkeeping of the transcripts (`dbMessagesMap` + `messagesMap` +
+   * `messagePagingMap` are its view).
+   */
+  messageReplica: ReplicaState<ConversationMessagePage>;
   /**
    * whether messages have fetched
    */
   messagesInit: boolean;
-  messagesMap: Record<string, ChatMessage[]>;
   /**
-   * Supervisor decision debounce timers by group ID
+   * Parsed messages for display (includes assistantGroup from conversation-flow)
    */
-  supervisorDebounceTimers: Record<string, number>;
-  /**
-   * Supervisor decision abort controllers by group ID
-   */
-  supervisorDecisionAbortControllers: Record<string, AbortController>;
-  /**
-   * Supervisor decision loading states
-   */
-  supervisorDecisionLoading: string[];
-  /**
-   * Supervisor todo list map keyed by session/topic combination
-   */
-  supervisorTodos: Record<string, SupervisorTodoItem[]>;
+  messagesMap: Record<string, UIChatMessage[]>;
 }
 
 export const initialMessageState: ChatMessageState = {
-  activeId: 'inbox',
-  activeSessionType: undefined,
+  activeAgentId: '',
+  dbMessagesMap: {},
   groupAgentMaps: {},
-  groupMaps: {},
-  groupsInit: false,
   isCreatingMessage: false,
   messageEditingIds: [],
-  messageLoadingIds: [],
+  messagePagingMap: {},
+  messageReplica: createReplicaState(),
   messagesInit: false,
   messagesMap: {},
-  supervisorDebounceTimers: {},
-  supervisorDecisionAbortControllers: {},
-  supervisorDecisionLoading: [],
-  supervisorTodos: {},
 };

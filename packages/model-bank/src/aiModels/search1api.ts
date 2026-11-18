@@ -1,4 +1,4 @@
-import { AIChatModelCard } from '../types/aiModel';
+import type { AIChatModelCard } from '../types/aiModel';
 
 const search1apiChatModels: AIChatModelCard[] = [
   {
@@ -7,9 +7,12 @@ const search1apiChatModels: AIChatModelCard[] = [
       search: true,
     },
     contextWindowTokens: 131_072,
-    description: 'DeepSeek R1 70B 标准版，支持实时联网搜索，适合需要最新信息的对话和文本处理任务。',
+    description:
+      'DeepSeek R1 70B standard edition with real-time web search, suited for up-to-date chat and text tasks.',
     displayName: 'DeepSeek R1 70B',
     enabled: true,
+    family: 'deepseek',
+    generation: 'deepseek-r1',
     id: 'deepseek-r1-70b-online',
     maxOutput: 16_384,
     type: 'chat',
@@ -21,9 +24,11 @@ const search1apiChatModels: AIChatModelCard[] = [
     },
     contextWindowTokens: 65_536,
     description:
-      'DeepSeek R1 满血版，拥有 671B 参数，支持实时联网搜索，具有更强大的理解和生成能力。',
+      'DeepSeek R1 full version with 671B parameters and real-time web search, offering stronger understanding and generation.',
     displayName: 'DeepSeek R1',
     enabled: true,
+    family: 'deepseek',
+    generation: 'deepseek-r1',
     id: 'deepseek-r1-online',
     maxOutput: 8192,
     type: 'chat',
@@ -35,9 +40,11 @@ const search1apiChatModels: AIChatModelCard[] = [
     },
     contextWindowTokens: 131_072,
     description:
-      'DeepSeek R1 70B 快速版，支持实时联网搜索，在保持模型性能的同时提供更快的响应速度。',
+      'DeepSeek R1 70B fast edition with real-time web search, delivering quicker responses while maintaining performance.',
     displayName: 'DeepSeek R1 70B Fast',
     enabled: true,
+    family: 'deepseek',
+    generation: 'deepseek-r1',
     id: 'deepseek-r1-70b-fast-online',
     maxOutput: 16_384,
     type: 'chat',
@@ -49,9 +56,11 @@ const search1apiChatModels: AIChatModelCard[] = [
     },
     contextWindowTokens: 163_840,
     description:
-      'DeepSeek R1 满血快速版，支持实时联网搜索，结合了 671B 参数的强大能力和更快的响应速度。',
+      'DeepSeek R1 fast full version with real-time web search, combining 671B-scale capability and faster response.',
     displayName: 'DeepSeek R1 Fast',
     enabled: true,
+    family: 'deepseek',
+    generation: 'deepseek-r1',
     id: 'deepseek-r1-fast-online',
     maxOutput: 16_384,
     type: 'chat',

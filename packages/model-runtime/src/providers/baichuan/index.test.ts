@@ -1,10 +1,19 @@
 // @vitest-environment node
-import { LobeOpenAICompatibleRuntime } from '@lobechat/model-runtime';
 import { ModelProvider } from 'model-bank';
-import { Mock, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Mock } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { LobeOpenAICompatibleRuntime } from '../../core/BaseAI';
 import { testProvider } from '../../providerTestUtils';
 import { LobeBaichuanAI, params } from './index';
+
+const createTurboModel = () => ({
+  function_call: true,
+  max_input_length: 32768,
+  max_tokens: 4096,
+  model: 'Baichuan3-Turbo',
+  model_show_name: 'Baichuan3-Turbo',
+});
 
 testProvider({
   Runtime: LobeBaichuanAI,
@@ -246,6 +255,16 @@ describe('LobeBaichuanAI - custom features', () => {
       expect(calledPayload.max_tokens).toBe(500);
       expect(calledPayload.top_p).toBe(0.95);
     });
+
+    it('should not send budget_tokens when thinking budget is not provided', () => {
+      const result = params.chatCompletion!.handlePayload!({
+        messages: [{ content: 'Hello', role: 'user' }],
+        model: 'Baichuan-M2',
+        thinking: {},
+      } as any);
+
+      expect(result).not.toHaveProperty('budget_tokens');
+    });
   });
 
   describe('models', () => {
@@ -262,13 +281,7 @@ describe('LobeBaichuanAI - custom features', () => {
     it('should fetch and process models correctly', async () => {
       mockClient.models.list.mockResolvedValue({
         data: [
-          {
-            function_call: true,
-            max_input_length: 32768,
-            max_tokens: 4096,
-            model: 'Baichuan3-Turbo',
-            model_show_name: 'Baichuan3-Turbo',
-          },
+          createTurboModel(),
           {
             function_call: false,
             max_input_length: 4096,
@@ -351,15 +364,7 @@ describe('LobeBaichuanAI - custom features', () => {
 
     it('should preserve abilities from known model list', async () => {
       mockClient.models.list.mockResolvedValue({
-        data: [
-          {
-            function_call: true,
-            max_input_length: 32768,
-            max_tokens: 4096,
-            model: 'Baichuan3-Turbo',
-            model_show_name: 'Baichuan3-Turbo',
-          },
-        ],
+        data: [createTurboModel()],
       });
 
       const models = await params.models({ client: mockClient as any });
@@ -437,17 +442,7 @@ describe('LobeBaichuanAI - custom features', () => {
 
     it('should filter out null or undefined models', async () => {
       mockClient.models.list.mockResolvedValue({
-        data: [
-          {
-            function_call: true,
-            max_input_length: 32768,
-            max_tokens: 4096,
-            model: 'Baichuan3-Turbo',
-            model_show_name: 'Baichuan3-Turbo',
-          },
-          null,
-          undefined,
-        ],
+        data: [createTurboModel(), null, undefined],
       });
 
       const models = await params.models({ client: mockClient as any });

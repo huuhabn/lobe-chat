@@ -3,19 +3,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useQueryRoute } from './useQueryRoute';
 
+const navigateMock = vi.hoisted(() => vi.fn((href: string) => href));
+const activeWorkspaceSlugMock = vi.hoisted(() => vi.fn<() => string | null>(() => null));
+
 // Mocks
-vi.mock('next/navigation', () => ({
-  useRouter: vi.fn(() => ({
-    push: vi.fn((href) => href),
-    replace: vi.fn((href) => href),
-  })),
+vi.mock('react-router', () => ({
+  useNavigate: () => navigateMock,
 }));
 
-vi.mock('nextjs-toploader/app', () => ({
-  useRouter: vi.fn(() => ({
-    push: vi.fn((href) => href),
-    replace: vi.fn((href) => href),
-  })),
+vi.mock('@/business/client/hooks/useActiveWorkspaceSlug', () => ({
+  getActiveWorkspaceSlug: activeWorkspaceSlugMock,
+  useActiveWorkspaceSlug: activeWorkspaceSlugMock,
 }));
 
 vi.mock('@/utils/env', () => ({
@@ -24,6 +22,10 @@ vi.mock('@/utils/env', () => ({
 
 beforeEach(() => {
   location.search = 'foo=bar';
+  activeWorkspaceSlugMock.mockReset();
+  activeWorkspaceSlugMock.mockReturnValue(null);
+  navigateMock.mockReset();
+  navigateMock.mockImplementation((href: string) => href);
 });
 
 describe('useQueryRoute', () => {
@@ -91,5 +93,13 @@ describe('useQueryRoute', () => {
     );
 
     expect(result.current).toBe('/example?foo=bar');
+  });
+
+  it('should preserve the active workspace prefix for agent topics', () => {
+    activeWorkspaceSlugMock.mockReturnValue('team');
+
+    const { result } = renderHook(() => useQueryRoute().push('/agent/agent-1/topics'));
+
+    expect(result.current).toBe('/team/agent/agent-1/topics?foo=bar');
   });
 });

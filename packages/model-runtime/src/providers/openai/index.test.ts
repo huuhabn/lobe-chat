@@ -1,13 +1,20 @@
 // @vitest-environment node
 import OpenAI from 'openai';
-import { Mock, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Mock } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { AgentRuntimeErrorType } from '../../types/error';
 import * as debugStreamModule from '../../utils/debugStream';
+import * as getModelPricingModule from '../../utils/getModelPricing';
 import officalOpenAIModels from './fixtures/openai-models.json';
 import { LobeOpenAI, params } from './index';
 
 // Mock the console.error to avoid polluting test output
 vi.spyOn(console, 'error').mockImplementation(() => {});
+vi.spyOn(getModelPricingModule, 'getModelPricing').mockResolvedValue(undefined);
+vi.mock('@lobechat/business-model-bank/model-config', () => ({
+  loadModels: vi.fn().mockResolvedValue([]),
+}));
 
 // Mock fetch for most tests, but will be restored for real network tests
 const mockFetch = vi.fn();
@@ -53,19 +60,40 @@ describe('LobeOpenAI', () => {
       expect(result).toBeInstanceOf(Response);
     });
 
+    it('should abort locally when the prompt exceeds the OpenAI model context window', async () => {
+      const mockCreateMethod = vi.spyOn(instance['client'].chat.completions, 'create');
+      const hugeContent = 'lorem ipsum dolor '.repeat(150_000);
+
+      try {
+        await instance.chat({
+          messages: [{ content: hugeContent, role: 'user' }],
+          model: 'gpt-4o',
+          temperature: 0,
+        });
+        expect.fail('expected chat to reject');
+      } catch (error) {
+        expect((error as any).errorType).toBe(AgentRuntimeErrorType.ExceededContextWindow);
+        expect((error as any).error.type).toBe('context_exceeded_pre_flight');
+        expect((error as any).error.model).toBe('gpt-4o');
+        expect((error as any).error.ctx).toBe(128_000);
+      }
+
+      expect(mockCreateMethod).not.toHaveBeenCalled();
+    });
+
     describe('Error', () => {
       it('should return ProviderBizError with an openai error response when OpenAI.APIError is thrown', async () => {
         // Arrange
         const apiError = new OpenAI.APIError(
           400,
           {
-            status: 400,
             error: {
               message: 'Bad Request',
             },
+            status: 400,
           },
           'Error message',
-          {},
+          new Headers(),
         );
 
         vi.spyOn(instance['client'].chat.completions, 'create').mockRejectedValue(apiError);
@@ -85,6 +113,7 @@ describe('LobeOpenAI', () => {
               status: 400,
             },
             errorType: 'ProviderBizError',
+            message: expect.any(String),
             provider: 'openai',
           });
         }
@@ -105,7 +134,7 @@ describe('LobeOpenAI', () => {
             message: 'api is undefined',
           },
         };
-        const apiError = new OpenAI.APIError(400, errorInfo, 'module error', {});
+        const apiError = new OpenAI.APIError(400, errorInfo, 'module error', new Headers());
 
         vi.spyOn(instance['client'].chat.completions, 'create').mockRejectedValue(apiError);
 
@@ -123,6 +152,7 @@ describe('LobeOpenAI', () => {
               cause: { message: 'api is undefined' },
             },
             errorType: 'ProviderBizError',
+            message: expect.any(String),
             provider: 'openai',
           });
         }
@@ -133,7 +163,7 @@ describe('LobeOpenAI', () => {
         const errorInfo = {
           cause: { message: 'api is undefined' },
         };
-        const apiError = new OpenAI.APIError(400, errorInfo, 'module error', {});
+        const apiError = new OpenAI.APIError(400, errorInfo, 'module error', new Headers());
 
         instance = new LobeOpenAI({
           apiKey: 'test',
@@ -157,6 +187,7 @@ describe('LobeOpenAI', () => {
               cause: { message: 'api is undefined' },
             },
             errorType: 'ProviderBizError',
+            message: expect.any(String),
             provider: 'openai',
           });
         }
@@ -178,13 +209,14 @@ describe('LobeOpenAI', () => {
         } catch (e) {
           expect(e).toEqual({
             endpoint: 'https://api.openai.com/v1',
-            errorType: 'AgentRuntimeError',
-            provider: 'openai',
             error: {
-              name: genericError.name,
               cause: genericError.cause,
               message: genericError.message,
+              name: genericError.name,
             },
+            errorType: 'AgentRuntimeError',
+            message: expect.any(String),
+            provider: 'openai',
           });
         }
       });
@@ -239,11 +271,73 @@ describe('LobeOpenAI', () => {
 
       const list = await instance.models();
 
-      expect(list).toMatchSnapshot();
+      expect(Array.isArray(list)).toBe(true);
+      expect(list.length).toBeGreaterThan(0);
+
+      const gpt35Turbo = list.find((model) => model.id === 'gpt-3.5-turbo-0613');
+      expect(gpt35Turbo).toBeDefined();
+      expect(gpt35Turbo?.id).toBe('gpt-3.5-turbo-0613');
+
+      const textEmbeddingAda = list.find((model) => model.id === 'text-embedding-ada-002');
+      expect(textEmbeddingAda).toBeDefined();
+      expect(textEmbeddingAda?.type).toBe('embedding');
+    });
+
+    it('lists a decision card next to a chat model served by the Decisions API', async () => {
+      (instance['client'].models.list as Mock).mockResolvedValue({
+        data: [{ created: 1_780_000_000, id: 'gpt-6-luna', object: 'model', owned_by: 'system' }],
+      });
+
+      const list = await instance.models();
+
+      expect(list.find((model) => model.id === 'gpt-6-luna')?.type).toBe('chat');
+      expect(list.find((model) => model.id === 'gpt-6-luna:decision')).toMatchObject({
+        displayName: 'GPT-6 Luna Decisions',
+        type: 'decision',
+      });
     });
   });
 
   describe('chatCompletion.handlePayload', () => {
+    it('should force raw audio input through Chat Completions and send input_audio', async () => {
+      const wavBase64 = 'UklGRjAwMDBXQVZFZm10IA==';
+
+      await instance.chat({
+        enabledSearch: true,
+        messages: [
+          {
+            content: [
+              {
+                audio_url: {
+                  mimeType: 'audio/wav',
+                  url: `data:audio/wav;base64,${wavBase64}`,
+                },
+                type: 'audio_url',
+              },
+            ],
+            role: 'user',
+          },
+        ],
+        model: 'o1-pro',
+        temperature: 0.7,
+      });
+
+      expect(instance['client'].responses.create).not.toHaveBeenCalled();
+      expect(instance['client'].chat.completions.create).toHaveBeenCalledTimes(1);
+      const createCall = (instance['client'].chat.completions.create as Mock).mock.calls[0][0];
+      expect(createCall.messages).toEqual([
+        {
+          content: [
+            {
+              input_audio: { data: wavBase64, format: 'wav' },
+              type: 'input_audio',
+            },
+          ],
+          role: 'user',
+        },
+      ]);
+    });
+
     it('should use responses API for responsesAPIModels without enabledSearch', async () => {
       const payload = {
         messages: [{ content: 'Hello', role: 'user' as const }],
@@ -259,12 +353,60 @@ describe('LobeOpenAI', () => {
       expect(createCall.model).toBe('o1-pro');
     });
 
+    it('should use responses API for GPT-5.6 family models', async () => {
+      const payload = {
+        messages: [{ content: 'Hello', role: 'user' as const }],
+        model: 'gpt-5.6-sol',
+        temperature: 0.7,
+      };
+
+      await instance.chat(payload);
+
+      expect(instance['client'].responses.create).toHaveBeenCalled();
+      const createCall = (instance['client'].responses.create as Mock).mock.calls[0][0];
+      expect(createCall.model).toBe('gpt-5.6-sol');
+    });
+
+    it('should use responses API for GPT-6 family models', async () => {
+      const payload = {
+        messages: [{ content: 'Hello', role: 'user' as const }],
+        model: 'gpt-6-astra',
+        temperature: 0.7,
+      };
+
+      await instance.chat(payload);
+
+      expect(instance['client'].responses.create).toHaveBeenCalled();
+      const createCall = (instance['client'].responses.create as Mock).mock.calls[0][0];
+      expect(createCall.model).toBe('gpt-6-astra');
+    });
+
+    it('should prune sampling parameters for Codex-prefixed GPT-5.6 models', async () => {
+      const payload = {
+        frequency_penalty: 0.5,
+        messages: [{ content: 'Hello', role: 'user' as const }],
+        model: 'codex/gpt-5.6-luna',
+        presence_penalty: 0.3,
+        temperature: 0.7,
+        top_p: 0.9,
+      };
+
+      await instance.chat(payload);
+
+      expect(instance['client'].responses.create).toHaveBeenCalled();
+      const createCall = (instance['client'].responses.create as Mock).mock.calls[0][0];
+      expect(createCall.frequency_penalty).toBeUndefined();
+      expect(createCall.presence_penalty).toBeUndefined();
+      expect(createCall.temperature).toBeUndefined();
+      expect(createCall.top_p).toBeUndefined();
+    });
+
     it('should use responses API when enabledSearch is true', async () => {
       const payload = {
+        enabledSearch: true,
         messages: [{ content: 'Hello', role: 'user' as const }],
         model: 'gpt-4o',
         temperature: 0.7,
-        enabledSearch: true,
       };
 
       await instance.chat(payload);
@@ -275,12 +417,12 @@ describe('LobeOpenAI', () => {
 
     it('should handle -search- models with stripped parameters', async () => {
       const payload = {
+        frequency_penalty: 0.5,
         messages: [{ content: 'Hello', role: 'user' as const }],
         model: 'gpt-4o-search-2024',
+        presence_penalty: 0.3,
         temperature: 0.7,
         top_p: 0.9,
-        frequency_penalty: 0.5,
-        presence_penalty: 0.3,
       };
 
       await instance.chat(payload);
@@ -296,12 +438,12 @@ describe('LobeOpenAI', () => {
 
     it('should handle regular models with all parameters', async () => {
       const payload = {
+        frequency_penalty: 0.5,
         messages: [{ content: 'Hello', role: 'user' as const }],
         model: 'gpt-4o',
+        presence_penalty: 0.3,
         temperature: 0.7,
         top_p: 0.9,
-        frequency_penalty: 0.5,
-        presence_penalty: 0.3,
       };
 
       await instance.chat(payload);
@@ -317,32 +459,66 @@ describe('LobeOpenAI', () => {
   });
 
   describe('responses.handlePayload', () => {
-    it('should add web_search tool when enabledSearch is true', async () => {
+    it('should add web_search and prune legacy sampling params for GPT-5.6', async () => {
       const payload = {
-        messages: [{ content: 'Hello', role: 'user' as const }],
-        model: 'gpt-4o', // 使用常规模型，通过 enabledSearch 触发 responses API
-        temperature: 0.7,
         enabledSearch: true,
-        tools: [{ type: 'function' as const, function: { name: 'test', description: 'test' } }],
+        frequency_penalty: 0.5,
+        messages: [{ content: 'Hello', role: 'user' as const }],
+        model: 'gpt-5.6-sol',
+        presence_penalty: 0.3,
+        reasoning: { mode: 'pro' as const },
+        reasoning_effort: 'max' as const,
+        temperature: 0.7,
+        top_p: 0.9,
+        tools: [{ function: { description: 'test', name: 'test' }, type: 'function' as const }],
       };
 
       await instance.chat(payload);
 
       const createCall = (instance['client'].responses.create as Mock).mock.calls[0][0];
       expect(createCall.tools).toEqual([
-        { type: 'function', name: 'test', description: 'test' },
+        { description: 'test', name: 'test', type: 'function' },
         { type: 'web_search' },
       ]);
+      expect(createCall).toMatchObject({
+        model: 'gpt-5.6-sol',
+        reasoning: { effort: 'max', mode: 'pro', summary: 'auto' },
+      });
+      expect(createCall.frequency_penalty).toBeUndefined();
+      expect(createCall.presence_penalty).toBeUndefined();
+      expect(createCall.temperature).toBeUndefined();
+      expect(createCall.top_p).toBeUndefined();
+    });
+
+    it('should prune the params GPT-6 Astra rejects and keep xhigh reasoning effort', async () => {
+      const payload = {
+        messages: [{ content: 'Hello', role: 'user' as const }],
+        model: 'gpt-6-astra',
+        reasoning_effort: 'xhigh' as const,
+        temperature: 0.7,
+        top_p: 0.9,
+      };
+
+      await instance.chat(payload);
+
+      const createCall = (instance['client'].responses.create as Mock).mock.calls[0][0];
+      expect(createCall).toMatchObject({
+        model: 'gpt-6-astra',
+        reasoning: { effort: 'xhigh', summary: 'auto' },
+      });
+      expect(createCall.temperature).toBeUndefined();
+      expect(createCall.top_logprobs).toBeUndefined();
+      expect(createCall.top_p).toBeUndefined();
     });
 
     it('should add search_context_size to web_search tool when OPENAI_SEARCH_CONTEXT_SIZE is set', async () => {
       // Note: oaiSearchContextSize is read at module load time, not runtime
       // This test verifies the tool structure is correct when the env var would be set
       const payload = {
+        enabledSearch: true,
         messages: [{ content: 'Hello', role: 'user' as const }],
         model: 'gpt-4o',
         temperature: 0.7,
-        enabledSearch: true,
       };
 
       await instance.chat(payload);
@@ -358,8 +534,8 @@ describe('LobeOpenAI', () => {
       const payload = {
         messages: [{ content: 'Hello', role: 'user' as const }],
         model: 'computer-use-preview',
-        temperature: 0.7,
         reasoning: { effort: 'medium' },
+        temperature: 0.7,
       };
 
       await instance.chat(payload);
@@ -369,10 +545,10 @@ describe('LobeOpenAI', () => {
       expect(createCall.reasoning).toEqual({ effort: 'medium', summary: 'auto' });
     });
 
-    it('should handle prunePrefixes models without computer-use truncation', async () => {
+    it('should handle reasoning payload models without computer-use truncation', async () => {
       const payload = {
         messages: [{ content: 'Hello', role: 'user' as const }],
-        model: 'o3-pro', // prunePrefixes 模型但非 computer-use，且在 responsesAPIModels 中
+        model: 'o3-pro',
         temperature: 0.7,
       };
 
@@ -393,7 +569,7 @@ describe('LobeOpenAI', () => {
       await instance.chat(payload);
 
       const createCall = (instance['client'].responses.create as Mock).mock.calls[0][0];
-      expect(createCall.reasoning).toEqual({ summary: 'auto', effort: 'high' });
+      expect(createCall.reasoning).toEqual({ effort: 'high', summary: 'auto' });
     });
 
     it('should set reasoning.effort to high for gpt-5-pro-2025-10-06 models', async () => {
@@ -406,28 +582,64 @@ describe('LobeOpenAI', () => {
       await instance.chat(payload);
 
       const createCall = (instance['client'].responses.create as Mock).mock.calls[0][0];
-      expect(createCall.reasoning).toEqual({ summary: 'auto', effort: 'high' });
+      expect(createCall.reasoning).toEqual({ effort: 'high', summary: 'auto' });
     });
-  });
 
-  describe('supportsFlexTier', () => {
-    // Note: enableServiceTierFlex is read at module load time
-    // These tests verify the logic would work if env var was set at module load
-    it('should verify flex tier logic for supported models', () => {
-      // Since enableServiceTierFlex is read at module load time,
-      // we can't dynamically test it without reloading the module.
-      // Instead, we verify that the supportsFlexTier function logic is correct
-      // by checking the model patterns it should support.
+    it('should set reasoning.effort to high for gpt-5.5-pro', async () => {
+      const payload = {
+        messages: [{ content: 'Hello', role: 'user' as const }],
+        model: 'gpt-5.5-pro',
+        temperature: 0.7,
+      };
 
-      const flexSupportedModels = ['gpt-5', 'o3', 'o4-mini'];
+      await instance.chat(payload);
 
-      // Should support these models
-      expect(flexSupportedModels.some((m) => 'gpt-5-turbo'.startsWith(m))).toBe(true);
-      expect(flexSupportedModels.some((m) => 'o3-pro'.startsWith(m))).toBe(true);
-      expect(flexSupportedModels.some((m) => 'o4-mini'.startsWith(m))).toBe(true);
+      const createCall = (instance['client'].responses.create as Mock).mock.calls[0][0];
+      expect(createCall.reasoning).toEqual({ effort: 'high', summary: 'auto' });
+    });
 
-      // Should NOT support o3-mini (explicitly excluded)
-      expect('o3-mini'.startsWith('o3-mini')).toBe(true);
+    it('should convert max_tokens to max_output_tokens for responses API', async () => {
+      const payload = {
+        max_tokens: 2048,
+        messages: [{ content: 'Hello', role: 'user' as const }],
+        model: 'o1-pro',
+        temperature: 0.7,
+      };
+
+      await instance.chat(payload);
+
+      const createCall = (instance['client'].responses.create as Mock).mock.calls[0][0];
+      expect(createCall.max_output_tokens).toBe(2048);
+      expect(createCall.max_tokens).toBeUndefined();
+    });
+
+    it('should not include max_output_tokens when max_tokens is undefined', async () => {
+      const payload = {
+        messages: [{ content: 'Hello', role: 'user' as const }],
+        model: 'o1-pro',
+        temperature: 0.7,
+      };
+
+      await instance.chat(payload);
+
+      const createCall = (instance['client'].responses.create as Mock).mock.calls[0][0];
+      expect(createCall.max_output_tokens).toBeUndefined();
+    });
+
+    it('should convert max_tokens to max_output_tokens for search-enabled models', async () => {
+      const payload = {
+        enabledSearch: true,
+        max_tokens: 4096,
+        messages: [{ content: 'Hello', role: 'user' as const }],
+        model: 'gpt-4o',
+        temperature: 0.7,
+      };
+
+      await instance.chat(payload);
+
+      const createCall = (instance['client'].responses.create as Mock).mock.calls[0][0];
+      expect(createCall.max_output_tokens).toBe(4096);
+      expect(createCall.max_tokens).toBeUndefined();
     });
   });
 

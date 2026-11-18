@@ -1,25 +1,22 @@
 'use client';
 
-import {
-  SiApachemaven,
-  SiBlender,
-  SiBun,
-  SiDeno,
-  SiDocker,
-  SiGit,
-  SiGo,
-  SiHelm,
-  SiKubernetes,
-  SiNodedotjs,
-  SiNpm,
-  SiPipx,
-  SiPnpm,
-  SiPython,
-  SiRust,
-  SiYarn,
-} from '@icons-pack/react-simple-icons';
-import { Icon, Tooltip } from '@lobehub/ui';
-import { useTheme } from 'antd-style';
+import SiApachemaven from '@icons-pack/react-simple-icons/icons/SiApachemaven';
+import SiBlender from '@icons-pack/react-simple-icons/icons/SiBlender';
+import SiBun from '@icons-pack/react-simple-icons/icons/SiBun';
+import SiDeno from '@icons-pack/react-simple-icons/icons/SiDeno';
+import SiDocker from '@icons-pack/react-simple-icons/icons/SiDocker';
+import SiGit from '@icons-pack/react-simple-icons/icons/SiGit';
+import SiGo from '@icons-pack/react-simple-icons/icons/SiGo';
+import SiHelm from '@icons-pack/react-simple-icons/icons/SiHelm';
+import SiKubernetes from '@icons-pack/react-simple-icons/icons/SiKubernetes';
+import SiNodedotjs from '@icons-pack/react-simple-icons/icons/SiNodedotjs';
+import SiNpm from '@icons-pack/react-simple-icons/icons/SiNpm';
+import SiPipx from '@icons-pack/react-simple-icons/icons/SiPipx';
+import SiPnpm from '@icons-pack/react-simple-icons/icons/SiPnpm';
+import SiPython from '@icons-pack/react-simple-icons/icons/SiPython';
+import SiRust from '@icons-pack/react-simple-icons/icons/SiRust';
+import SiYarn from '@icons-pack/react-simple-icons/icons/SiYarn';
+import { cssVar, Icon, Tooltip } from '@lobehub/ui';
 import { memo } from 'react';
 
 import Java from './Java';
@@ -59,12 +56,11 @@ const icons: any = {
 };
 
 const InstallationIcon = memo<{ size?: number; type: string }>(({ type, size = 20 }) => {
-  const theme = useTheme();
   const iconType = type.split(' ')[0];
   if (iconType === 'none') return;
   return (
     <Tooltip title={iconType}>
-      <Icon fill={theme.colorTextDescription} icon={icons?.[iconType] || Terminal} size={size} />
+      <Icon fill={cssVar.colorTextDescription} icon={icons?.[iconType] || Terminal} size={size} />
     </Tooltip>
   );
 });

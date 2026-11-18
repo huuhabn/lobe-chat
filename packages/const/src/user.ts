@@ -1,13 +1,20 @@
-import { TopicDisplayMode, UserPreference } from '@lobechat/types';
+import type { UserPreference } from '@lobechat/types';
+
+export const CURRENT_ONBOARDING_VERSION = 2;
 
 export const DEFAULT_PREFERENCE: UserPreference = {
-  disableInputMarkdownRender: false,
-  enableGroupChat: false,
   guide: {
     moveSettingsToAvatar: true,
     topic: true,
   },
-  telemetry: null,
-  topicDisplayMode: TopicDisplayMode.ByTime,
+  lab: {
+    enableAgentGraphConfig: false,
+    enableMessageTextSelectionActions: false,
+    enableOAuthApps: false,
+  },
+  projectTopicGroupMode: 'byAgent',
+  topicGroupMode: 'byTime',
+  topicIncludeCompleted: false,
+  topicSortBy: 'updatedAt',
   useCmdEnterToSend: false,
 };

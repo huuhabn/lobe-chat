@@ -1,7 +1,17 @@
+import { sanitizeToolCallArguments } from '../utils/sanitizeToolCallArguments';
 import debug from 'debug';
 
 import { BaseProcessor } from '../base/BaseProcessor';
 import type { MessageToolCall, PipelineContext, ProcessorOptions } from '../types';
+
+declare module '../types' {
+  interface PipelineContextMetadataOverrides {
+    supportTools?: boolean;
+    toolCallProcessed?: number;
+    toolCallsConverted?: number;
+    toolMessagesConverted?: number;
+  }
+}
 
 const log = debug('context-engine:processor:ToolCallProcessor');
 
@@ -20,6 +30,13 @@ export interface ToolCallConfig {
  * Tool Call Processor
  * Responsible for converting ChatMessage format tool calls to OpenAI format
  */
+/**
+ * Stand-in for a deferred tool result that has not been delivered yet. Worded
+ * so the model neither reports the call as empty nor re-runs it.
+ */
+export const PENDING_TOOL_RESULT_CONTENT =
+  'This call is still running in the background and has not returned a result yet. It is not an empty result: its output will be delivered to the turn that started it. Do not repeat the call; tell the user it is still in progress if they ask for it.';
+
 export class ToolCallProcessor extends BaseProcessor {
   readonly name = 'ToolCallProcessor';
 
@@ -41,7 +58,7 @@ export class ToolCallProcessor extends BaseProcessor {
     let toolCallsConverted = 0;
     let toolMessagesConverted = 0;
 
-    // 处理每条消息的工具调用
+    // Process tool calls for each message
     for (let i = 0; i < clonedContext.messages.length; i++) {
       const message = clonedContext.messages[i];
 
@@ -52,7 +69,7 @@ export class ToolCallProcessor extends BaseProcessor {
           processedCount++;
           clonedContext.messages[i] = updatedMessage;
 
-          // 统计转换的工具调用和工具消息数量
+          // Count converted tool calls and tool messages
           if (message.role === 'assistant' && message.tools) {
             toolCallsConverted += message.tools.length;
           }
@@ -60,15 +77,15 @@ export class ToolCallProcessor extends BaseProcessor {
             toolMessagesConverted++;
           }
 
-          log(`处理消息 ${message.id}，角色: ${message.role}`);
+          log(`Processed message ${message.id}, role: ${message.role}`);
         }
       } catch (error) {
-        log.extend('error')(`处理消息 ${message.id} 工具调用时出错: ${error}`);
-        // 继续处理其他消息
+        log.extend('error')(`Error processing tool call in message ${message.id}: ${error}`);
+        // Continue processing other messages
       }
     }
 
-    // 更新元数据
+    // Update metadata
     clonedContext.metadata.toolCallProcessed = processedCount;
     clonedContext.metadata.toolCallsConverted = toolCallsConverted;
     clonedContext.metadata.toolMessagesConverted = toolMessagesConverted;
@@ -82,7 +99,7 @@ export class ToolCallProcessor extends BaseProcessor {
   }
 
   /**
-   * 处理单条消息的工具调用
+   * Process tool calls for a single message
    */
   private async processMessage(message: any, supportTools: boolean): Promise<any> {
     switch (message.role) {
@@ -101,50 +118,58 @@ export class ToolCallProcessor extends BaseProcessor {
   }
 
   /**
-   * 处理助手消息的工具调用
+   * Process tool calls in assistant message
    */
   private processAssistantMessage(message: any, supportTools: boolean): any {
-    // 检查是否有工具调用
+    // Check if there are tool calls
     const hasTools = message.tools && message.tools.length > 0;
     const hasEmptyToolCalls = message.tool_calls && message.tool_calls.length === 0;
 
     if (!supportTools || (!hasTools && hasEmptyToolCalls)) {
-      // 如果不支持工具或只有空的工具调用，返回普通消息（移除工具相关属性）
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      // If tools not supported or only has empty tool calls, return regular message (remove tool-related properties)
+
       const { tools, tool_calls, ...messageWithoutTools } = message;
       return messageWithoutTools;
     }
 
     if (!hasTools) {
-      // 如果没有 tools 但有其他工具调用属性，只移除 tools
+      // If no tools but has other tool call properties, only remove tools
       return message;
     }
 
-    // 将 tools 转换为 tool_calls 格式
-    const tool_calls = message.tools.map(
-      (tool: any): MessageToolCall => ({
-        function: {
-          arguments: tool.arguments,
-          name: this.config.genToolCallingName
-            ? this.config.genToolCallingName(tool.identifier, tool.apiName, tool.type)
-            : `${tool.identifier}.${tool.apiName}`,
-        },
-        id: tool.id,
-        type: 'function',
-      }),
-    );
+    // Convert tools to tool_calls format.
+    // Sanitize `arguments` as a last line of defense against historical messages
+    // whose tool_calls arguments are invalid JSON (e.g. persisted before the
+    // server-side sanitizer landed, or produced by an older client). Strict
+    // providers like NVIDIA NIM otherwise 400 on the entire request. See .
+    const tool_calls = message.tools.map((tool: any): MessageToolCall => ({
+      function: {
+        arguments: sanitizeToolCallArguments(tool.arguments),
+        name: this.config.genToolCallingName
+          ? this.config.genToolCallingName(tool.identifier, tool.apiName, tool.type)
+          : `${tool.identifier}.${tool.apiName}`,
+      },
+      id: tool.id,
+      thoughtSignature: tool.thoughtSignature,
+      type: 'function',
+    }));
 
     return { ...message, tool_calls };
   }
 
   /**
-   * 处理工具消息
+   * Process tool message
    */
   private processToolMessage(message: any, supportTools: boolean): any {
+    const content = this.isPendingToolResult(message)
+      ? PENDING_TOOL_RESULT_CONTENT
+      : message.content;
+
     if (!supportTools) {
-      // 如果不支持工具，将工具消息转换为用户消息
+      // If tools not supported, convert tool message to user message
       return {
         ...message,
+        content,
         name: undefined,
         plugin: undefined,
         role: 'user',
@@ -152,7 +177,7 @@ export class ToolCallProcessor extends BaseProcessor {
       };
     }
 
-    // 生成工具名称
+    // Generate tool name
     const toolName = message.plugin
       ? this.config.genToolCallingName
         ? this.config.genToolCallingName(
@@ -165,20 +190,36 @@ export class ToolCallProcessor extends BaseProcessor {
 
     return {
       ...message,
+      content,
       name: toolName,
-      // 保留 tool_call_id 用于关联
+      // Keep tool_call_id for association
     };
   }
 
   /**
-   * 验证工具调用格式
+   * A deferred tool (callSubAgent, callAgent, group members) persists an empty
+   * placeholder with `pluginState.status: 'pending'` and parks its turn until
+   * the result is backfilled. A NEW user turn on the same topic can run in the
+   * meantime and would otherwise read that slot as an empty result.
+   */
+  private isPendingToolResult(message: any): boolean {
+    const isEmpty =
+      message.content === undefined ||
+      message.content === null ||
+      (typeof message.content === 'string' && !message.content.trim());
+
+    return isEmpty && message.pluginState?.status === 'pending';
+  }
+
+  /**
+   * Validate tool call format
    */
   private validateToolCall(tool: any): boolean {
     return !!(tool && tool.id && tool.identifier && tool.apiName && tool.arguments);
   }
 
   /**
-   * 验证工具消息格式
+   * Validate tool message format
    */
   private validateToolMessage(message: any): boolean {
     return !!(message && message.tool_call_id && message.content !== undefined);

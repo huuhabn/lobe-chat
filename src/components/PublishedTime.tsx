@@ -1,10 +1,12 @@
 'use client';
 
-import { createStyles } from 'antd-style';
+import { cssVar } from '@lobehub/ui/stylex/cssVar.stylex';
+import * as stylex from '@stylexjs/stylex';
 import dayjs from 'dayjs';
-import 'dayjs/locale/zh.js';
-import { CSSProperties, FC } from 'react';
+import { type CSSProperties, type FC } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import { sx } from '@/styles/sx';
 
 const LAST_MODIFIED = new Date().toISOString();
 
@@ -17,55 +19,45 @@ const formatTime = (time?: string) => {
   }
 };
 
-const useStyles = createStyles(({ css, token }) => {
-  return {
-    time: css`
-      font-size: 12px;
-      color: ${token.colorTextSecondary};
-      letter-spacing: 0.02em;
-    `,
-  };
+const formatDate = (date: string, t: (key: string) => string, template?: string) => {
+  if (template) return dayjs(date).format(template);
+  const d = dayjs(date);
+  const now = dayjs();
+
+  if (d.isSame(now, 'day')) return t('time.today');
+  if (d.isSame(now.subtract(1, 'day'), 'day')) return t('time.yesterday');
+  if (d.isSame(now, 'year')) return d.format(t('time.formatThisYear'));
+  return d.format(t('time.formatOtherYear'));
+};
+
+const styles = stylex.create({
+  time: {
+    fontSize: '12px',
+    color: cssVar.colorTextSecondary,
+    letterSpacing: '0.02em',
+  },
 });
 
-interface PrivacyUpdatedProps {
+interface PublishedTimeProps {
   className?: string;
   date: string;
-  showPrefix?: boolean;
   style?: CSSProperties;
   template?: string;
+  xstyle?: stylex.StyleXStyles;
 }
-const PublishedTime: FC<PrivacyUpdatedProps> = ({
-  date,
-  style,
-  className,
-  template = 'dddd, MMMM D YYYY',
-  showPrefix = true,
-}) => {
-  const { t, i18n } = useTranslation('discover');
-  const { styles, cx } = useStyles();
-  const time = dayjs(date).locale(i18n.language).format(template);
+const PublishedTime: FC<PublishedTimeProps> = ({ date, style, className, template, xstyle }) => {
+  const { t } = useTranslation('common');
+  const time = formatDate(date, t as (key: string) => string, template);
 
-  if (showPrefix) {
-    return (
-      <div className={cx(styles.time, className)} style={style}>
-        {t('publishedTime')}{' '}
-        <time aria-label={'published-date'} dateTime={formatTime(date)}>
-          {time}
-        </time>
-      </div>
-    );
-  } else {
-    return (
-      <time
-        aria-label={'published-date'}
-        className={cx(styles.time, className)}
-        dateTime={formatTime(date)}
-        style={style}
-      >
-        {time}
-      </time>
-    );
-  }
+  return (
+    <time
+      aria-label={'published-date'}
+      dateTime={formatTime(date)}
+      {...sx(styles.time, xstyle, className, style)}
+    >
+      {time}
+    </time>
+  );
 };
 
 export default PublishedTime;

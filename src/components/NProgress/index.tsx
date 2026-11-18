@@ -1,17 +1,15 @@
 'use client';
 
-import { useTheme } from 'antd-style';
+import { cssVar } from '@lobehub/ui';
 import NextTopLoader from 'nextjs-toploader';
-import { memo } from 'react';
 
 import { isDesktop } from '@/const/version';
 
-const NProgress = memo(() => {
-  const theme = useTheme();
+const NProgress = () => {
   return (
     !isDesktop && (
       <NextTopLoader
-        color={theme.colorText}
+        color={cssVar.colorText}
         height={2}
         shadow={false}
         showSpinner={false}
@@ -19,6 +17,6 @@ const NProgress = memo(() => {
       />
     )
   );
-});
+};
 
 export default NProgress;

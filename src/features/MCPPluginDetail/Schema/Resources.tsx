@@ -1,38 +1,33 @@
-import { Block, Highlighter, Tag } from '@lobehub/ui';
-import { Empty } from 'antd';
+import { Block, cssVar, Highlighter, Tag } from '@lobehub/ui';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import InlineTable from '@/components/InlineTable';
 
 import { useDetailContext } from '../DetailProvider';
-import { useStyles } from './style';
+import { SchemaEmpty } from './SchemaList';
+import { styles } from './style';
 import { ModeType } from './types';
 
 const Resources = memo<{ mode?: ModeType }>(({ mode }) => {
-  const { t } = useTranslation('discover');
+  const { t } = useTranslation(['discover', 'plugin']);
   const { resources } = useDetailContext();
-  const { styles, theme } = useStyles();
 
-  if (!resources)
-    return (
-      <Block variant={'outlined'}>
-        <Empty
-          description={t('mcp.details.schema.resources.empty')}
-          image={Empty.PRESENTED_IMAGE_SIMPLE}
-        />
-      </Block>
-    );
+  if (!resources?.length) return <SchemaEmpty>{t('plugin:mcpEmpty.resources')}</SchemaEmpty>;
 
   return mode === ModeType.Docs ? (
     <Block style={{ overflow: 'hidden' }} variant={'outlined'}>
       <InlineTable
+        dataSource={resources}
+        pagination={false}
+        rowKey={'uri'}
+        size={'middle'}
         columns={[
           {
             dataIndex: 'name',
             key: 'name',
             render: (text) => (
-              <span className={styles.code} style={{ color: theme.gold }}>
+              <span className={styles.code} style={{ color: cssVar.gold }}>
                 {text}
               </span>
             ),
@@ -50,14 +45,11 @@ const Resources = memo<{ mode?: ModeType }>(({ mode }) => {
             title: t('mcp.details.schema.resources.table.uri'),
           },
           {
-            dataIndex: 'description',
             key: 'description',
+            render: (_, record) => (record as { description?: string }).description,
             title: t('mcp.details.schema.resources.table.description'),
           },
         ]}
-        dataSource={resources}
-        pagination={false}
-        size={'middle'}
       />
     </Block>
   ) : (

@@ -1,8 +1,8 @@
 // @vitest-environment node
-import { ModelProvider } from 'model-bank';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentRuntimeErrorType } from '../../types/error';
+import type { ModelRuntimeDiagnostics } from '../../types/providerDiagnostics';
 import { LobeAzureAI } from './index';
 
 describe('LobeAzureAI', () => {
@@ -57,23 +57,43 @@ describe('LobeAzureAI', () => {
         model: 'gpt-4',
       };
 
-      vi.spyOn(instance.client.path('/chat/completions'), 'post').mockResolvedValue({
+      const mockPost = vi.fn().mockResolvedValue({
         body: mockResponse,
-      } as any);
-
-      const result = await instance.chat({
-        messages: [{ content: 'Hello', role: 'user' }],
-        model: 'gpt-4',
-        stream: false,
       });
 
+      vi.spyOn(instance.client, 'path').mockReturnValue({
+        post: mockPost,
+      } as any);
+
+      const diagnostics: ModelRuntimeDiagnostics = {};
+      const result = await instance.chat(
+        {
+          messages: [{ content: 'Hello', role: 'user' }],
+          model: 'gpt-4',
+          stream: false,
+        },
+        { diagnostics },
+      );
+
       expect(result).toBeDefined();
+      expect(instance.client.path).toHaveBeenCalledWith('/chat/completions');
+      expect(mockPost).toHaveBeenCalled();
+      expect(diagnostics.providerResponse).toMatchObject({
+        apiMode: 'azure_ai_chat_completions',
+        eventCount: 1,
+        rawEvents: [mockResponse],
+        terminalEventReceived: true,
+      });
     });
 
     it('should handle generic errors', async () => {
       const mockError = new Error('Network error');
 
-      vi.spyOn(instance.client.path('/chat/completions'), 'post').mockRejectedValue(mockError);
+      const mockPost = vi.fn().mockRejectedValue(mockError);
+
+      vi.spyOn(instance.client, 'path').mockReturnValue({
+        post: mockPost,
+      } as any);
 
       try {
         await instance.chat({

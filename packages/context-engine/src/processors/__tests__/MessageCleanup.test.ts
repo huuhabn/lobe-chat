@@ -18,18 +18,6 @@ describe('MessageCleanupProcessor', () => {
     },
   });
 
-  describe('constructor', () => {
-    it('should initialize with default options', () => {
-      const processor = new MessageCleanupProcessor();
-      expect(processor.name).toBe('MessageCleanupProcessor');
-    });
-
-    it('should initialize with custom options', () => {
-      const processor = new MessageCleanupProcessor({ debug: true });
-      expect(processor.name).toBe('MessageCleanupProcessor');
-    });
-  });
-
   describe('process', () => {
     it('should clean system messages', async () => {
       const processor = new MessageCleanupProcessor();
@@ -128,6 +116,55 @@ describe('MessageCleanupProcessor', () => {
         content: '',
         role: 'assistant',
         tool_calls: toolCalls,
+      });
+    });
+
+    it('should preserve reasoning in assistant messages', async () => {
+      const processor = new MessageCleanupProcessor();
+      const reasoning = {
+        content: 'Let me think about this...',
+        signature: 'sha256:abc123',
+      };
+
+      const context = createContext([
+        {
+          content: 'Here is the answer',
+          extraField: 'remove',
+          id: 'msg5',
+          reasoning,
+          role: 'assistant',
+          timestamp: Date.now(),
+        },
+      ]);
+
+      const result = await processor.process(context);
+
+      expect(result.messages).toHaveLength(1);
+      expect(result.messages[0]).toEqual({
+        content: 'Here is the answer',
+        reasoning,
+        role: 'assistant',
+      });
+    });
+
+    it('should preserve source model and provider in assistant messages', async () => {
+      const processor = new MessageCleanupProcessor();
+      const context = createContext([
+        {
+          content: 'Here is the answer',
+          model: 'gpt-5.5',
+          provider: 'chatgpt',
+          role: 'assistant',
+        },
+      ]);
+
+      const result = await processor.process(context);
+
+      expect(result.messages[0]).toEqual({
+        content: 'Here is the answer',
+        model: 'gpt-5.5',
+        provider: 'chatgpt',
+        role: 'assistant',
       });
     });
 
@@ -273,8 +310,8 @@ describe('MessageCleanupProcessor', () => {
       const result = await processor.process(context);
 
       // Both messages are "cleaned" because comparison is done by reference
-      expect(result.metadata.messageCleanup.cleanedCount).toBe(2);
-      expect(result.metadata.messageCleanup.totalMessages).toBe(2);
+      expect(result.metadata.messageCleanup!.cleanedCount).toBe(2);
+      expect(result.metadata.messageCleanup!.totalMessages).toBe(2);
     });
 
     it('should handle empty messages array', async () => {

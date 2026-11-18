@@ -1,16 +1,26 @@
+import type { ChatToolPayload } from '@lobechat/types';
+import pMap from 'p-map';
+
 import type {
   Agent,
   AgentEvent,
   AgentInstruction,
+  AgentInstructionCallTool,
+  AgentInstructionCallToolsBatch,
+  AgentInstructionResolveBlockedTools,
   AgentRuntimeContext,
   AgentState,
   Cost,
+  GeneralAgentCallToolsBatchResultPayload,
   InstructionExecutor,
   RuntimeConfig,
   ToolRegistry,
   ToolsCalling,
   Usage,
 } from '../types';
+import { getLlmAttemptCount } from '../utils/llmCalls';
+import { isBlockedStatus } from '../utils/status';
+import { UsageCounter } from './UsageCounter';
 
 /**
  * Simplified Agent Runtime - The "Engine" that executes instructions from an "Agent" (Brain).
@@ -18,11 +28,16 @@ import type {
  */
 export class AgentRuntime {
   private executors: Record<AgentInstruction['type'], InstructionExecutor>;
+  private operationId?: string;
+  private getOperation?: RuntimeConfig['getOperation'];
 
   constructor(
     private agent: Agent,
     private config: RuntimeConfig = {},
   ) {
+    this.operationId = config.operationId;
+    this.getOperation = config.getOperation;
+
     // Build executors with priority: agent.executors > config.executors > built-in
     this.executors = {
       call_llm: this.createCallLLMExecutor(),
@@ -31,11 +46,34 @@ export class AgentRuntime {
       request_human_approve: this.createHumanApproveExecutor(),
       request_human_prompt: this.createHumanPromptExecutor(),
       request_human_select: this.createHumanSelectExecutor(),
+      resolve_blocked_tools: this.createResolveBlockedToolsExecutor(),
       // Config executors override built-in
       ...config.executors,
       // Agent provided executors have highest priority
       ...(agent.executors as any),
     };
+  }
+
+  /**
+   * Get operation context (sessionId, topicId, etc.)
+   * Returns the business context captured by the operation
+   */
+  getContext() {
+    if (!this.operationId || !this.getOperation) {
+      return undefined;
+    }
+    return this.getOperation(this.operationId).context;
+  }
+
+  /**
+   * Get operation abort controller
+   * Returns the AbortController for cancellation
+   */
+  getAbortController(): AbortController | undefined {
+    if (!this.operationId || !this.getOperation) {
+      return undefined;
+    }
+    return this.getOperation(this.operationId).abortController;
   }
 
   /**
@@ -47,6 +85,18 @@ export class AgentRuntime {
     state: AgentState,
     context?: AgentRuntimeContext,
   ): Promise<{ events: AgentEvent[]; newState: AgentState; nextContext?: AgentRuntimeContext }> {
+    // LLM-call accounting is additive. `usage.llm.apiCalls` only counts the
+    // current operation and `llmCalls` carries the seeded baseline of a resumed
+    // one, so remember where this step started and add the attempts it actually
+    // made instead of taking a max that drops retries.
+    const llmCallsBeforeStep = Math.max(state.llmCalls ?? 0, state.usage?.llm?.apiCalls ?? 0);
+    const apiCallsBeforeStep = state.usage?.llm?.apiCalls ?? 0;
+
+    // Tracked outside the try block: when an instruction throws, the error path
+    // still has to keep the work the earlier instructions of this step finished.
+    let latestState: AgentState | undefined;
+    let executedLlmInstructions = 0;
+
     try {
       // Increment step count and check limits
       const newState = structuredClone(state);
@@ -55,20 +105,14 @@ export class AgentRuntime {
 
       // Check maximum steps limit
       if (newState.maxSteps && newState.stepCount > newState.maxSteps) {
-        // Finish execution when maxSteps is exceeded
-        newState.status = 'done';
-        const finishEvent = {
-          finalState: newState,
-          reason: 'max_steps_exceeded' as const,
-          reasonDetail: `Maximum steps exceeded: ${newState.maxSteps}`,
-          type: 'done' as const,
-        };
-
-        return {
-          events: [finishEvent],
-          newState,
-          nextContext: undefined, // No next context when done
-        };
+        if (newState.forceFinish) {
+          // Already in forceFinish flow, skip maxSteps check and continue execution
+        } else {
+          // First time exceeding: set forceFinish flag
+          // Tools will be allowed to complete, but the next LLM call will produce
+          // a final text response (tools stripped, summary prompt injected)
+          newState.forceFinish = true;
+        }
       }
 
       // Use provided context or create initial context
@@ -79,9 +123,77 @@ export class AgentRuntime {
 
       // Handle human approved tool calls
       if (runtimeContext.phase === 'human_approved_tool') {
-        const approvedPayload = runtimeContext.payload as { approvedToolCall: ToolsCalling };
-        rawInstructions = { payload: approvedPayload.approvedToolCall, type: 'call_tool' };
+        const approvedPayload = runtimeContext.payload as {
+          approvedToolCall?: ChatToolPayload;
+          /**
+           * Batch approval — every tool the user approved in ONE action.
+           * Present instead of `approvedToolCall` when the client resolved the
+           * whole pending batch at once.
+           */
+          approvedToolCalls?: ChatToolPayload[];
+          assistantMessageId?: string;
+          parentMessageId: string;
+          skipCreateToolMessage?: boolean;
+          /** `tool_call_id → pending tool message id`, batch path only. */
+          toolMessageIds?: Record<string, string>;
+        };
+
+        // The resume seeded an assistant placeholder (assistantMessageId) for
+        // this operation, but the first instruction here is a tool execution —
+        // not an LLM call — so nothing consumes the placeholder and it would be
+        // left as an empty orphan sibling once the follow-up call_llm creates
+        // its own message. Stash the id on state so the first call_llm after
+        // the tool result reuses the placeholder instead (consumed once, then
+        // cleared in the instruction loop below).
+        if (approvedPayload.assistantMessageId) {
+          newState.pendingAssistantMessageId = approvedPayload.assistantMessageId;
+        }
+
+        const approvedBatch = approvedPayload.approvedToolCalls ?? [];
+
+        if (approvedBatch.length > 0) {
+          // Run every approved tool in ONE batch, exactly as the original
+          // (pre-approval) `call_tools_batch` would have. Approving them one at
+          // a time instead means one LLM continuation per tool, each seeing the
+          // not-yet-approved siblings as empty results.
+          rawInstructions = {
+            payload: {
+              existingToolMessageIds: approvedPayload.toolMessageIds ?? {},
+              parentMessageId: approvedPayload.parentMessageId,
+              toolsCalling: approvedBatch,
+            },
+            type: 'call_tools_batch',
+          };
+        } else {
+          rawInstructions = {
+            payload: {
+              parentMessageId: approvedPayload.parentMessageId,
+              skipCreateToolMessage: approvedPayload.skipCreateToolMessage,
+              toolCalling: approvedPayload.approvedToolCall,
+            },
+            type: 'call_tool',
+          };
+        }
+      } else if (newState.deferredHumanApproval && !isBlockedStatus(newState.status)) {
+        // The operation is resuming from an async-tool park whose LLM turn also
+        // asked for human approval. Put that request to the user now, before
+        // the agent plans another LLM call — the tool call would otherwise
+        // never get a result. Once approved, the continuation sees every tool
+        // result of the turn and moves on.
+        rawInstructions = newState.deferredHumanApproval;
+        newState.deferredHumanApproval = undefined;
       } else {
+        if (runtimeContext.phase === 'tool_result') {
+          const toolResultPayload = runtimeContext.payload as
+            | {
+                assistantMessageId?: string;
+              }
+            | undefined;
+          if (toolResultPayload?.assistantMessageId) {
+            newState.pendingAssistantMessageId = toolResultPayload.assistantMessageId;
+          }
+        }
+
         // Standard flow: Plan -> Execute
         rawInstructions = await this.agent.runner(runtimeContext, newState);
       }
@@ -89,30 +201,96 @@ export class AgentRuntime {
       // Normalize to array
       const instructions = Array.isArray(rawInstructions) ? rawInstructions : [rawInstructions];
 
+      // Convert old format to new format
+      const normalizedInstructions = instructions.map((instruction) => {
+        if (
+          instruction.type === 'call_tools_batch' && // Check if payload is array of ToolsCalling (old format)
+          Array.isArray(instruction.payload)
+        ) {
+          const toolsCalling = instruction.payload.map((tc: ToolsCalling) => ({
+            apiName: tc.function.name,
+            arguments: tc.function.arguments,
+            id: tc.id,
+            identifier: tc.function.name,
+            thoughtSignature: tc.thoughtSignature,
+            type: 'default' as any,
+          }));
+
+          return {
+            payload: {
+              parentMessageId: '',
+              toolsCalling,
+            },
+            type: 'call_tools_batch',
+          };
+        }
+        return instruction;
+      });
+
       // Execute all instructions sequentially
       let currentState = newState;
+      latestState = currentState;
       const allEvents: AgentEvent[] = [];
       let finalNextContext: AgentRuntimeContext | undefined = undefined;
+      let hasFinishInstruction = false;
 
-      for (const instruction of instructions) {
+      // Counted rather than flagged: a runner may queue several `call_llm`
+      // instructions in one step (the fallback path when the selected executor
+      // does not mutate `usage`). Only the instructions whose executor actually
+      // ran are counted — see the increment inside the loop below.
+      executedLlmInstructions = 0;
+
+      for (const [instructionIndex, instruction] of normalizedInstructions.entries()) {
+        if (instruction.type === 'finish') hasFinishInstruction = true;
+
         let result;
+        const instructionContext = { ...runtimeContext, instructionIndex };
 
         // Special handling for batch tool execution
         if (instruction.type === 'call_tools_batch') {
-          result = await this.executeToolsBatch(instruction as any, currentState);
+          // Check if custom executor is provided (e.g., server-side with DB access)
+          const customExecutor = this.executors['call_tools_batch' as keyof typeof this.executors];
+          if (customExecutor) {
+            result = await customExecutor(instruction, currentState, instructionContext);
+          } else {
+            // Fallback to built-in executeToolsBatch
+            result = await this.executeToolsBatch(
+              instruction as any,
+              currentState,
+              instructionContext,
+            );
+          }
         } else {
           const executor = this.executors[instruction.type as keyof typeof this.executors];
           if (!executor) {
             throw new Error(`No executor found for instruction type: ${instruction.type}`);
           }
-          result = await executor(instruction, currentState);
+          // Pass runtimeContext to executor so it can access stepContext
+          result = await executor(instruction, currentState, instructionContext);
         }
+
+        // Count a `call_llm` only once its executor returned. A preflight
+        // failure — missing model/provider, absent parent message, or a rejected
+        // context — throws before the transport is invoked, so no provider call
+        // happened. Counting it up-front would let the fallback in the success
+        // and error paths report a model call that never ran, and inflate the
+        // `maxSteps` budget with it.
+        if (instruction.type === 'call_llm') executedLlmInstructions += 1;
 
         // Accumulate events
         allEvents.push(...result.events);
 
         // Update state
         currentState = result.newState;
+        latestState = currentState;
+
+        // A call_llm consumes any resume-seeded assistant placeholder exactly
+        // once — it has now either reused that message id or created its own —
+        // so clear the seed before the next step. Otherwise a later assistant
+        // turn in the same operation would reuse the id and overwrite this one.
+        if (instruction.type === 'call_llm' && currentState.pendingAssistantMessageId) {
+          currentState.pendingAssistantMessageId = undefined;
+        }
 
         // Keep the last nextContext
         if (result.nextContext) {
@@ -120,10 +298,15 @@ export class AgentRuntime {
         }
 
         // Stop execution if blocked
-        if (
-          currentState.status === 'waiting_for_human_input' ||
-          currentState.status === 'interrupted'
-        ) {
+        if (isBlockedStatus(currentState.status)) {
+          if (currentState.status === 'waiting_for_async_tool') {
+            currentState = await this.settleInstructionsBehindAsyncToolPause(
+              normalizedInstructions.slice(instructionIndex + 1),
+              currentState,
+              runtimeContext,
+              allEvents,
+            );
+          }
           break;
         }
       }
@@ -131,18 +314,93 @@ export class AgentRuntime {
       // Ensure stepCount and lastModified are preserved
       currentState.stepCount = newState.stepCount;
       currentState.lastModified = newState.lastModified;
+      // Prefer the attempts the provider actually reported; fall back to one
+      // call per executed LLM instruction when usage is unavailable.
+      const apiCallsDelta = Math.max(
+        (currentState.usage?.llm?.apiCalls ?? 0) - apiCallsBeforeStep,
+        0,
+      );
+      currentState.llmCalls = llmCallsBeforeStep + (apiCallsDelta || executedLlmInstructions);
+
+      // A 'finish' instruction is not a real execution step, undo the +1 from the top of step()
+      if (hasFinishInstruction) {
+        currentState.stepCount = Math.max(currentState.stepCount - 1, 0);
+      }
 
       return {
         events: allEvents,
         newState: currentState,
-        nextContext: finalNextContext,
+        // When execution is blocked (waiting for human, waiting for an async
+        // tool result, or interrupted), clear nextContext so the outer loop
+        // stops instead of continuing
+        nextContext: isBlockedStatus(currentState.status) ? undefined : finalNextContext,
       };
     } catch (error) {
-      const errorState = structuredClone(state);
-      errorState.stepCount += 1;
+      // Keep the progress this step already made. Earlier instructions may have
+      // reached the provider and mutated `usage`; rebuilding from the step-entry
+      // `state` would drop those calls, so a step whose second `call_llm` threw
+      // reported only the failed call and a step whose later tool threw reported
+      // the successful call as zero.
+      const errorState = structuredClone(latestState ?? state);
+      // `newState` bumped the counter before the first instruction; only the
+      // untouched step-entry state still needs it.
+      if (!latestState) errorState.stepCount += 1;
+
+      // A terminated LLM call still made provider attempts. Record them even
+      // though no output was finalized, so the user-facing count and the
+      // `maxSteps` budget match what actually happened.
+      const llmAttempts = getLlmAttemptCount(error);
+      if (llmAttempts > 0) {
+        errorState.usage = UsageCounter.accumulateAttempts(errorState.usage, llmAttempts);
+      }
+      const apiCallsDelta = Math.max(
+        (errorState.usage?.llm?.apiCalls ?? 0) - apiCallsBeforeStep,
+        0,
+      );
+      errorState.llmCalls = llmCallsBeforeStep + (apiCallsDelta || executedLlmInstructions);
       errorState.lastModified = new Date().toISOString();
       return this.createErrorResult(errorState, error);
     }
+  }
+
+  /**
+   * Handle the instructions an LLM turn queued behind a tool that parked the
+   * operation for an async result (sub-agent, client tool). Dropping them
+   * leaves their tool calls without a result row, and the next LLM call gets a
+   * synthetic `tool_result_missing` for each.
+   *
+   * - `resolve_blocked_tools` only persists rejected results, so it runs now.
+   * - `request_human_approve` would park the operation a second time; it is
+   *   held on the state and issued when the async tool resumes the operation.
+   *
+   * Anything else keeps the previous behavior and is left to the resumed turn.
+   */
+  private async settleInstructionsBehindAsyncToolPause(
+    queuedInstructions: AgentInstruction[],
+    pausedState: AgentState,
+    runtimeContext: AgentRuntimeContext,
+    events: AgentEvent[],
+  ): Promise<AgentState> {
+    let currentState = pausedState;
+
+    for (const instruction of queuedInstructions) {
+      if (instruction.type === 'request_human_approve') {
+        currentState = { ...currentState, deferredHumanApproval: instruction };
+        continue;
+      }
+
+      if (instruction.type === 'resolve_blocked_tools') {
+        const result = await this.executors.resolve_blocked_tools(
+          instruction,
+          currentState,
+          runtimeContext,
+        );
+        events.push(...result.events);
+        currentState = result.newState;
+      }
+    }
+
+    return currentState;
   }
 
   /**
@@ -150,9 +408,10 @@ export class AgentRuntime {
    */
   async approveToolCall(
     state: AgentState,
-    approvedToolCall: any,
+    approvedToolCall: ChatToolPayload,
   ): Promise<{ events: AgentEvent[]; newState: AgentState; nextContext?: AgentRuntimeContext }> {
     const context: AgentRuntimeContext = {
+      operationId: this.operationId,
       payload: { approvedToolCall },
       phase: 'human_approved_tool',
       session: this.createSessionContext(state),
@@ -248,23 +507,20 @@ export class AgentRuntime {
     }
 
     // Otherwise, just return the resumed state
+    const initialContext = this.createInitialContext(newState);
     return {
       events: [resumeEvent],
       newState,
-      nextContext: this.createInitialContext(newState),
+      nextContext: initialContext,
     };
   }
 
   /**
-   * Create a new agent state with flexible initialization
-   * @param partialState - Partial state to override defaults
-   * @returns Complete AgentState with defaults filled in
+   * Create default usage statistics structure
+   * @returns Default Usage object with all counters set to 0
    */
-  static createInitialState(partialState: Partial<AgentState> & { sessionId: string }): AgentState {
-    const now = new Date().toISOString();
-
-    // Default usage statistics
-    const defaultUsage: Usage = {
+  static createDefaultUsage(): Usage {
+    return {
       humanInteraction: {
         approvalRequests: 0,
         promptRequests: 0,
@@ -277,40 +533,58 @@ export class AgentRuntime {
         tokens: { input: 0, output: 0, total: 0 },
       },
       tools: {
-        byTool: {},
+        byTool: [],
         totalCalls: 0,
         totalTimeMs: 0,
       },
     };
+  }
 
-    // Default cost structure
-    const defaultCost: Cost = {
+  /**
+   * Create default cost structure
+   * @returns Default Cost object with all costs set to 0
+   */
+  static createDefaultCost(): Cost {
+    const now = new Date().toISOString();
+    return {
       calculatedAt: now,
       currency: 'USD',
       llm: {
-        byModel: {},
+        byModel: [],
         currency: 'USD',
         total: 0,
       },
       tools: {
-        byTool: {},
+        byTool: [],
         currency: 'USD',
         total: 0,
       },
       total: 0,
     };
+  }
+
+  /**
+   * Create a new agent state with flexible initialization
+   * @param partialState - Partial state to override defaults
+   * @returns Complete AgentState with defaults filled in
+   */
+  static createInitialState(
+    partialState?: Partial<AgentState> & { operationId: string },
+  ): AgentState {
+    const now = new Date().toISOString();
 
     return {
-      cost: defaultCost,
+      cost: AgentRuntime.createDefaultCost(),
       // Default values
       createdAt: now,
       lastModified: now,
       messages: [],
       status: 'idle',
       stepCount: 0,
-      usage: defaultUsage,
+      llmCalls: 0,
+      usage: AgentRuntime.createDefaultUsage(),
       // User provided values override defaults
-      ...partialState,
+      ...(partialState || { operationId: '' }),
     };
   }
 
@@ -384,6 +658,7 @@ export class AgentRuntime {
 
         // Provide next context based on LLM result
         const nextContext: AgentRuntimeContext = {
+          operationId: this.operationId,
           payload: {
             hasToolCalls: toolCalls.length > 0,
             result: { content: assistantContent, tool_calls: toolCalls },
@@ -403,7 +678,7 @@ export class AgentRuntime {
   /** Create call_tool executor */
   private createCallToolExecutor(): InstructionExecutor {
     return async (instruction, state) => {
-      const { payload: toolCall } = instruction as Extract<AgentInstruction, { type: 'call_tool' }>;
+      const { payload } = instruction as AgentInstructionCallTool;
       const newState = structuredClone(state);
       const events: AgentEvent[] = [];
 
@@ -412,9 +687,10 @@ export class AgentRuntime {
 
       const tools = this.agent.tools || ({} as ToolRegistry);
 
+      const toolCall = payload.toolCalling;
       // Support both ToolsCalling (OpenAI format) and CallingToolPayload formats
-      const toolName = toolCall.apiName || toolCall.function?.name;
-      const toolArgs = toolCall.arguments || toolCall.function?.arguments;
+      const toolName = toolCall.apiName;
+      const toolArgs = toolCall.arguments;
       const toolId = toolCall.id;
 
       const handler = tools[toolName];
@@ -455,6 +731,7 @@ export class AgentRuntime {
 
       // Provide next context for tool result
       const nextContext: AgentRuntimeContext = {
+        operationId: this.operationId,
         payload: {
           result,
           toolCall,
@@ -468,6 +745,50 @@ export class AgentRuntime {
     };
   }
 
+  /** Create blocked tools executor */
+  private createResolveBlockedToolsExecutor(): InstructionExecutor {
+    return async (instruction, state) => {
+      const { payload } = instruction as AgentInstructionResolveBlockedTools;
+      const newState = structuredClone(state);
+      const events: AgentEvent[] = [];
+
+      for (const toolCalling of payload.toolsCalling) {
+        const result = {
+          content:
+            payload.blockedContentByCallId?.[toolCalling.id] ??
+            payload.blockedContent ??
+            'Blocked by security/privacy.',
+          ...(payload.blockedReason && { error: payload.blockedReason }),
+          success: false,
+        };
+
+        newState.messages.push({
+          content: result.content,
+          role: 'tool',
+          tool_call_id: toolCalling.id,
+        });
+        events.push({ id: toolCalling.id, result, type: 'tool_result' });
+      }
+
+      newState.lastModified = new Date().toISOString();
+      newState.status = 'running';
+
+      return {
+        events,
+        newState,
+        nextContext: {
+          operationId: this.operationId,
+          payload: {
+            parentMessageId: payload.parentMessageId,
+            toolCount: payload.toolsCalling.length,
+          },
+          phase: 'tools_batch_result',
+          session: this.createSessionContext(newState),
+        },
+      };
+    };
+  }
+
   /** Create human approve executor */
   private createHumanApproveExecutor(): InstructionExecutor {
     return async (instruction, state) => {
@@ -478,16 +799,15 @@ export class AgentRuntime {
       const newState = structuredClone(state);
 
       newState.lastModified = new Date().toISOString();
-      newState.status = 'waiting_for_human_input';
+      newState.status = 'waiting_for_human';
       newState.pendingToolsCalling = pendingToolsCalling;
 
       const events: AgentEvent[] = [
         {
+          operationId: newState.operationId,
           pendingToolsCalling,
-          sessionId: newState.sessionId,
           type: 'human_approve_required',
         },
-        { toolCalls: pendingToolsCalling, type: 'tool_pending' },
       ];
 
       return { events, newState };
@@ -504,14 +824,14 @@ export class AgentRuntime {
       const newState = structuredClone(state);
 
       newState.lastModified = new Date().toISOString();
-      newState.status = 'waiting_for_human_input';
+      newState.status = 'waiting_for_human';
       newState.pendingHumanPrompt = { metadata, prompt };
 
       const events: AgentEvent[] = [
         {
           metadata,
+          operationId: newState.operationId,
           prompt,
-          sessionId: newState.sessionId,
           type: 'human_prompt_required',
         },
       ];
@@ -530,16 +850,16 @@ export class AgentRuntime {
       const newState = structuredClone(state);
 
       newState.lastModified = new Date().toISOString();
-      newState.status = 'waiting_for_human_input';
+      newState.status = 'waiting_for_human';
       newState.pendingHumanSelect = { metadata, multi, options, prompt };
 
       const events: AgentEvent[] = [
         {
           metadata,
           multi,
+          operationId: newState.operationId,
           options,
           prompt,
-          sessionId: newState.sessionId,
           type: 'human_select_required',
         },
       ];
@@ -575,27 +895,32 @@ export class AgentRuntime {
    * Execute multiple tool calls concurrently
    */
   private async executeToolsBatch(
-    instruction: { payload: any[]; type: 'call_tools_batch' },
+    instruction: AgentInstructionCallToolsBatch,
     baseState: AgentState,
+    context?: AgentRuntimeContext,
   ): Promise<{
     events: AgentEvent[];
     newState: AgentState;
     nextContext?: AgentRuntimeContext;
   }> {
-    const { payload: toolsCalling } = instruction;
+    const { payload } = instruction;
 
     // Execute all tools concurrently based on the same state
-    const results = await Promise.all(
-      toolsCalling.map((toolCall) =>
-        this.executors.call_tool(
-          { payload: toolCall, type: 'call_tool' } as any,
-          structuredClone(baseState), // Each tool starts from the same base state
-        ),
+    const results = await pMap(instruction.payload.toolsCalling, (toolCalling: ChatToolPayload) =>
+      this.executors.call_tool(
+        {
+          payload: { parentMessageId: payload.parentMessageId, toolCalling },
+          type: 'call_tool',
+        } as AgentInstructionCallTool,
+        structuredClone(baseState), // Each tool starts from the same base state
+        context, // Pass context to each tool call
       ),
     );
 
+    const lastParentMessageId = (results.at(-1)!.nextContext?.payload as any)
+      ?.parentMessageId as string;
     // Merge results
-    return this.mergeToolResults(results, baseState);
+    return this.mergeToolResults(results, baseState, lastParentMessageId);
   }
 
   /**
@@ -608,6 +933,7 @@ export class AgentRuntime {
       nextContext?: AgentRuntimeContext;
     }>,
     baseState: AgentState,
+    lastParentMessageId: string,
   ): {
     events: AgentEvent[];
     newState: AgentState;
@@ -617,9 +943,16 @@ export class AgentRuntime {
     const allEvents: AgentEvent[] = [];
 
     // Merge all tool messages in order
+    // Get the set of tool_call_ids that already exist in baseState to avoid duplicates
+    const existingToolCallIds = new Set(
+      baseState.messages.filter((m) => m.role === 'tool').map((m) => m.tool_call_id),
+    );
+
     for (const result of results) {
-      // Extract tool role messages
-      const toolMessages = result.newState.messages.filter((m) => m.role === 'tool');
+      // Extract only NEW tool role messages (not already in baseState)
+      const toolMessages = result.newState.messages.filter(
+        (m) => m.role === 'tool' && !existingToolCallIds.has(m.tool_call_id),
+      );
       newState.messages.push(...toolMessages);
 
       // Merge events
@@ -630,13 +963,15 @@ export class AgentRuntime {
         newState.usage.tools.totalCalls += result.newState.usage.tools.totalCalls;
         newState.usage.tools.totalTimeMs += result.newState.usage.tools.totalTimeMs;
 
-        // Merge per-tool statistics
-        Object.entries(result.newState.usage.tools.byTool).forEach(([tool, stats]) => {
-          if (newState.usage.tools.byTool[tool]) {
-            newState.usage.tools.byTool[tool].calls += stats.calls;
-            newState.usage.tools.byTool[tool].totalTimeMs += stats.totalTimeMs;
+        // Merge per-tool statistics (now using array)
+        result.newState.usage.tools.byTool.forEach((toolStats) => {
+          const existingTool = newState.usage.tools.byTool.find((t) => t.name === toolStats.name);
+          if (existingTool) {
+            existingTool.calls += toolStats.calls;
+            existingTool.totalTimeMs += toolStats.totalTimeMs;
+            existingTool.errors += toolStats.errors || 0;
           } else {
-            newState.usage.tools.byTool[tool] = { ...stats };
+            newState.usage.tools.byTool.push({ ...toolStats });
           }
         });
       }
@@ -645,6 +980,17 @@ export class AgentRuntime {
       if (result.newState.cost && newState.cost) {
         newState.cost.tools.total += result.newState.cost.tools.total;
         newState.cost.total += result.newState.cost.tools.total;
+
+        // Merge per-tool cost statistics (now using array)
+        result.newState.cost.tools.byTool.forEach((toolCost) => {
+          const existingToolCost = newState.cost.tools.byTool.find((t) => t.name === toolCost.name);
+          if (existingToolCost) {
+            existingToolCost.calls += toolCost.calls;
+            existingToolCost.totalCost += toolCost.totalCost;
+          } else {
+            newState.cost.tools.byTool.push({ ...toolCost });
+          }
+        });
       }
     }
 
@@ -654,10 +1000,12 @@ export class AgentRuntime {
       events: allEvents,
       newState,
       nextContext: {
+        operationId: this.operationId,
         payload: {
+          parentMessageId: lastParentMessageId,
           toolCount: results.length,
           toolResults: results.map((r) => r.nextContext?.payload),
-        },
+        } as GeneralAgentCallToolsBatchResultPayload,
         phase: 'tools_batch_result',
         session: this.createSessionContext(newState),
       },
@@ -719,6 +1067,7 @@ export class AgentRuntime {
           events: [warningEvent],
           newState,
           nextContext: {
+            operationId: this.operationId,
             payload: { error: warningEvent.error, isCostWarning: true },
             phase: 'error' as const,
             session: this.createSessionContext(newState),
@@ -730,11 +1079,12 @@ export class AgentRuntime {
 
   /**
    * Create session context metadata - reusable helper
+   * Note: Uses sessionId in context for backwards compatibility with AgentRuntimeContext
    */
   private createSessionContext(state: AgentState) {
     return {
       messageCount: state.messages.length,
-      sessionId: state.sessionId,
+      sessionId: state.operationId,
       status: state.status,
       stepCount: state.stepCount,
     };
@@ -748,6 +1098,7 @@ export class AgentRuntime {
 
     if (lastMessage?.role === 'user') {
       return {
+        operationId: this.operationId,
         payload: {
           isFirstMessage: state.messages.length === 1,
           message: lastMessage,
@@ -758,6 +1109,7 @@ export class AgentRuntime {
     }
 
     return {
+      operationId: this.operationId,
       payload: undefined,
       phase: 'init',
       session: this.createSessionContext(state),

@@ -1,30 +1,41 @@
 import {
-  DesktopNotificationResult,
-  ShowDesktopNotificationParams,
-  dispatch,
+  type DesktopNotificationResult,
+  type ShowDesktopNotificationParams,
 } from '@lobechat/electron-client-ipc';
 
+import { ensureElectronIpc } from '@/utils/electron/ipc';
+
 /**
- * 桌面通知服务
+ * Desktop notification service
  */
 export class DesktopNotificationService {
   /**
-   * 显示桌面通知（仅在窗口隐藏时）
-   * @param params 通知参数
-   * @returns 通知结果
+   * Show a desktop notification.
+   * By default notifications only appear when the main window is hidden or unfocused.
+   * Callers can override this with `force` for high-priority reminders.
+   * @param params Notification parameters
+   * @returns Notification result
    */
   async showNotification(
     params: ShowDesktopNotificationParams,
   ): Promise<DesktopNotificationResult> {
-    return dispatch('showDesktopNotification', params);
+    return ensureElectronIpc().notification.showDesktopNotification(params);
   }
 
   /**
-   * 检查主窗口是否隐藏
-   * @returns 是否隐藏
+   * Check if main window is hidden
+   * @returns Whether it is hidden
    */
   async isMainWindowHidden(): Promise<boolean> {
-    return dispatch('isMainWindowHidden');
+    return ensureElectronIpc().notification.isMainWindowHidden();
+  }
+
+  /**
+   * Set the app-level badge count (dock red dot on macOS, Unity counter on Linux,
+   * overlay icon on Windows). Pass 0 to clear.
+   */
+  async setBadgeCount(count: number): Promise<void> {
+    return ensureElectronIpc().notification.setBadgeCount(count);
   }
 }
 

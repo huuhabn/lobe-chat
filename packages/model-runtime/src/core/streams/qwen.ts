@@ -1,37 +1,57 @@
-import OpenAI from 'openai';
-import {
+import type OpenAI from 'openai';
+import type {
   ChatCompletionContentPart,
   ChatCompletionContentPartText,
 } from 'openai/resources/index.mjs';
 import type { Stream } from 'openai/streaming';
 
-import { ChatStreamCallbacks } from '../../types';
+import type { ChatStreamCallbacks } from '../../types';
 import { convertOpenAIUsage } from '../usageConverters';
 import {
+  createEventCallbacksTransformer,
+  createModelEventTransformer,
+  createSSEEncoder,
+} from './events';
+import type {
+  ChatPayloadForTransformStream,
   StreamContext,
   StreamProtocolChunk,
   StreamProtocolToolCallChunk,
   StreamToolCallChunkData,
+} from './protocol';
+import {
   convertIterableToStream,
-  createCallbacksTransformer,
-  createSSEProtocolTransformer,
   createTokenSpeedCalculator,
   generateToolCallId,
 } from './protocol';
+import { setOpenAIChatCompletionUsageMissingDiagnostics } from './usageMissingDiagnostics';
 
 export const transformQwenStream = (
   chunk: OpenAI.ChatCompletionChunk,
   streamContext?: StreamContext,
+  payload?: ChatPayloadForTransformStream,
 ): StreamProtocolChunk | StreamProtocolChunk[] => {
+  if (streamContext) {
+    if (streamContext.chunkIndex === undefined) {
+      streamContext.chunkIndex = 0;
+    } else {
+      streamContext.chunkIndex++;
+    }
+  }
+
   if (Array.isArray(chunk.choices) && chunk.choices.length === 0 && chunk.usage) {
-    const usage = convertOpenAIUsage({
-      ...chunk.usage,
-      completion_tokens_details: chunk.usage.completion_tokens_details || {},
-      prompt_tokens_details: chunk.usage.prompt_tokens_details || {},
-    });
+    const usage = convertOpenAIUsage(
+      {
+        ...chunk.usage,
+        completion_tokens_details: chunk.usage.completion_tokens_details || {},
+        prompt_tokens_details: chunk.usage.prompt_tokens_details || {},
+      },
+      payload,
+    );
 
     if (streamContext) {
       streamContext.usage = usage;
+      delete streamContext.usageMissingDiagnostics;
     }
 
     return { data: usage, id: chunk.id, type: 'usage' };
@@ -46,7 +66,7 @@ export const transformQwenStream = (
   if (Array.isArray(item.delta?.content)) {
     const part = item.delta.content[0];
     const process = (part: ChatCompletionContentPart): ChatCompletionContentPartText => {
-      let [key, value] = Object.entries(part)[0];
+      const [key, value] = Object.entries(part)[0];
       if (key === 'image') {
         return {
           text: `![image](${value})`,
@@ -70,17 +90,72 @@ export const transformQwenStream = (
 
   if (item.delta?.tool_calls) {
     return {
-      data: item.delta.tool_calls.map(
-        (value, index): StreamToolCallChunkData => ({
-          function: value.function,
-          id: value.id || generateToolCallId(index, value.function?.name),
-          index: typeof value.index !== 'undefined' ? value.index : index,
+      data: item.delta.tool_calls.map((value, arrayIndex): StreamToolCallChunkData => {
+        // Get the actual tool index from the chunk, fallback to array position
+        const toolIndex = typeof value.index !== 'undefined' ? value.index : arrayIndex;
+
+        // Store tool call info in streamContext.tools map by index for parallel tool calls
+        // This allows us to correctly track multiple tools being called in parallel
+        if (streamContext && value.id && value.function?.name) {
+          if (!streamContext.tools) {
+            streamContext.tools = {};
+          }
+          streamContext.tools[toolIndex] = {
+            id: value.id,
+            index: toolIndex,
+            name: value.function.name,
+          };
+        }
+
+        // Get stored tool info for this index (for incremental chunks without id)
+        const storedTool = streamContext?.tools?.[toolIndex];
+
+        return {
+          // Qwen models may send tool_calls in two separate chunks:
+          // 1. First chunk: {id, name} without arguments
+          // 2. Second chunk: {id, arguments} without name
+          // We need to provide default values to handle both cases
+          // Use null for missing name (same as OpenAI stream behavior)
+          function: {
+            arguments: value.function?.arguments ?? '',
+            name: value.function?.name ?? null,
+          },
+          // For incremental chunks without id, use the stored tool id from streamContext.tools
+          // based on the tool index to correctly associate arguments with the right tool call
+          id: value.id || storedTool?.id || generateToolCallId(toolIndex, value.function?.name),
+          index: toolIndex,
           type: value.type || 'function',
-        }),
-      ),
+        };
+      }),
       id: chunk.id,
       type: 'tool_calls',
     } as StreamProtocolToolCallChunk;
+  }
+
+  const usageChunk: StreamProtocolChunk | undefined = chunk.usage
+    ? { data: convertOpenAIUsage(chunk.usage, payload), id: chunk.id, type: 'usage' }
+    : undefined;
+  const appendUsageChunk = (
+    protocolChunk: StreamProtocolChunk | StreamProtocolChunk[],
+  ): StreamProtocolChunk | StreamProtocolChunk[] => {
+    if (!usageChunk) return protocolChunk;
+
+    if (streamContext) delete streamContext.usageMissingDiagnostics;
+
+    return Array.isArray(protocolChunk)
+      ? [...protocolChunk, usageChunk]
+      : [protocolChunk, usageChunk];
+  };
+
+  if (item.finish_reason && streamContext) {
+    if (usageChunk) {
+      delete streamContext.usageMissingDiagnostics;
+    } else {
+      setOpenAIChatCompletionUsageMissingDiagnostics(streamContext, payload, {
+        finishReason: item.finish_reason,
+        responseId: chunk.id,
+      });
+    }
   }
 
   // DeepSeek reasoner will put thinking in the reasoning_content field
@@ -94,10 +169,14 @@ export const transformQwenStream = (
   }
 
   if (typeof item.delta?.content === 'string') {
-    return { data: item.delta.content, id: chunk.id, type: 'text' };
+    const textChunk: StreamProtocolChunk = { data: item.delta.content, id: chunk.id, type: 'text' };
+
+    return item.finish_reason ? appendUsageChunk(textChunk) : textChunk;
   }
 
   if (item.finish_reason) {
+    if (usageChunk) return usageChunk;
+
     return { data: item.finish_reason, id: chunk.id, type: 'stop' };
   }
 
@@ -115,25 +194,35 @@ export const transformQwenStream = (
 export const QwenAIStream = (
   stream: Stream<OpenAI.ChatCompletionChunk> | ReadableStream,
   // TODO: preserve for RFC 097
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars, unused-imports/no-unused-vars
+
   {
     callbacks,
+    payload,
     inputStartAt,
     enableStreaming = true,
-  }: { callbacks?: ChatStreamCallbacks; enableStreaming?: boolean; inputStartAt?: number } = {},
+  }: {
+    callbacks?: ChatStreamCallbacks;
+    enableStreaming?: boolean;
+    inputStartAt?: number;
+    payload?: ChatPayloadForTransformStream;
+  } = {},
 ) => {
   const streamContext: StreamContext = { id: '' };
   const readableStream =
     stream instanceof ReadableStream ? stream : convertIterableToStream(stream);
 
+  const transformWithPayload = (chunk: OpenAI.ChatCompletionChunk, streamContext: StreamContext) =>
+    transformQwenStream(chunk, streamContext, payload);
+
   return readableStream
     .pipeThrough(
-      createTokenSpeedCalculator(transformQwenStream, {
-        enableStreaming: enableStreaming,
+      createTokenSpeedCalculator(transformWithPayload, {
+        enableStreaming,
         inputStartAt,
         streamStack: streamContext,
       }),
     )
-    .pipeThrough(createSSEProtocolTransformer((c) => c, streamContext))
-    .pipeThrough(createCallbacksTransformer(callbacks));
+    .pipeThrough(createModelEventTransformer((c) => c, streamContext))
+    .pipeThrough(createEventCallbacksTransformer(callbacks, { streamStack: streamContext }))
+    .pipeThrough(createSSEEncoder());
 };

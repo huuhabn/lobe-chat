@@ -1,55 +1,47 @@
-import { ActionIcon, Avatar } from '@lobehub/ui';
-import { useTheme } from 'antd-style';
-import { t } from 'i18next';
-import { XIcon } from 'lucide-react';
+import { agentDisplayName } from '@lobechat/types';
+import { Flexbox, Text } from '@lobehub/ui';
 import { memo } from 'react';
-import { Flexbox } from 'react-layout-kit';
+import { useTranslation } from 'react-i18next';
 
-import SidebarHeader from '@/components/SidebarHeader';
-import { DEFAULT_AVATAR } from '@/const/meta';
-import { useChatStore } from '@/store/chat';
-import { useChatGroupStore } from '@/store/chatGroup';
+import AgentAvatar from '@/components/AgentAvatar';
+import PortalHeader from '@/features/Portal/components/Header';
+import { useAgentGroupStore } from '@/store/agentGroup';
 import { useSessionStore } from '@/store/session';
 import { sessionSelectors } from '@/store/session/selectors';
 
-const Header = memo(() => {
-  const theme = useTheme();
-  const togglePortal = useChatStore((s) => s.togglePortal);
-  const close = () => {
-    useChatGroupStore.setState({ activeThreadAgentId: '' });
-    togglePortal(false);
-  };
-  const activeThreadAgentId = useChatGroupStore((s) => s.activeThreadAgentId);
+import { useGroupThreadClose } from './useClose';
+
+const Header = memo<{ onClose?: () => void }>(({ onClose }) => {
+  const { t } = useTranslation('common');
+  const activeThreadAgentId = useAgentGroupStore((s) => s.activeThreadAgentId);
 
   const agents = useSessionStore(sessionSelectors.currentGroupAgents);
   const currentAgent = agents?.find((agent) => agent.id === activeThreadAgentId);
 
+  const close = useGroupThreadClose(onClose);
+
   return (
-    <SidebarHeader
-      actions={
-        <Flexbox gap={4} horizontal>
-          <ActionIcon icon={XIcon} onClick={close} size={'small'} />
-        </Flexbox>
-      }
-      paddingBlock={6}
-      paddingInline={8}
-      style={{
-        background: `linear-gradient(to bottom, ${theme.colorBgContainerSecondary}, ${theme.colorFillQuaternary})`,
-      }}
+    <PortalHeader
       title={
-        <Flexbox align={'center'} gap={8} horizontal>
-          <Avatar
-            avatar={currentAgent?.avatar || DEFAULT_AVATAR}
+        <Flexbox horizontal align={'center'} gap={8} style={{ minWidth: 0 }}>
+          <AgentAvatar
+            agentId={currentAgent?.id}
+            avatar={currentAgent?.avatar}
             background={currentAgent?.backgroundColor ?? undefined}
+            name={agentDisplayName(currentAgent, t('defaultSession'))}
+            shape={'square'}
             size={20}
           />
-          <div style={{ fontWeight: 600 }}>
-            {currentAgent?.title || t('defaultSession', { ns: 'common' })}
-          </div>
+          <Text ellipsis weight={600}>
+            {agentDisplayName(currentAgent, t('defaultSession'))}
+          </Text>
         </Flexbox>
       }
+      onClose={close}
     />
   );
 });
+
+Header.displayName = 'PortalGroupThreadHeader';
 
 export default Header;

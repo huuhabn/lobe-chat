@@ -1,43 +1,55 @@
-import { SiApple, SiLinux } from '@icons-pack/react-simple-icons';
+import SiApple from '@icons-pack/react-simple-icons/icons/SiApple';
+import SiLinux from '@icons-pack/react-simple-icons/icons/SiLinux';
 import { Microsoft } from '@lobehub/icons';
-import { ActionIcon, Block, Collapse, Icon, Snippet, Tag } from '@lobehub/ui';
-import { Divider, Empty, Popover, Steps } from 'antd';
-import { createStyles } from 'antd-style';
-import { startCase } from 'lodash-es';
+import {
+  Accordion,
+  ActionIcon,
+  Block,
+  createStaticStyles,
+  cssVar,
+  Divider,
+  Empty,
+  Flexbox,
+  Icon,
+  Popover,
+  Snippet,
+  Steps,
+  Tag,
+} from '@lobehub/ui';
+import { startCase } from 'es-toolkit/compat';
 import {
   CheckIcon,
   CloudIcon,
   CodeIcon,
   DownloadIcon,
   MinusIcon,
+  Package,
   TerminalIcon,
 } from 'lucide-react';
-import { markdownToTxt } from 'markdown-to-txt';
 import { memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Flexbox } from 'react-layout-kit';
 
 import Descriptions from '@/components/Descriptions';
 import InlineTable from '@/components/InlineTable';
+import Title from '@/routes/(main)/community/features/Title';
+import { markdownToTxt } from '@/utils/markdownToTxt';
 
-import Title from '../../../app/[variants]/(main)/discover/features/Title';
 import InstallationIcon from '../../../components/MCPDepsIcon';
 import CollapseDesc from '../CollapseDesc';
 import CollapseLayout from '../CollapseLayout';
 import { useDetailContext } from '../DetailProvider';
 import Platform from './Platform';
 
-const useStyles = createStyles(({ css, token }) => {
+const styles = createStaticStyles(({ css }) => {
   return {
     code: css`
-      font-family: ${token.fontFamilyCode};
+      font-family: ${cssVar.fontFamilyCode};
     `,
   };
 });
 
 const Deployment = memo<{ mobile?: boolean }>(({ mobile }) => {
-  const { styles, theme } = useStyles();
-  const { t } = useTranslation('discover');
+  const { t } = useTranslation(['discover', 'plugin']);
   const { deploymentOptions = [], identifier } = useDetailContext();
   const [activeKey, setActiveKey] = useState<string[]>(['0']);
 
@@ -45,8 +57,10 @@ const Deployment = memo<{ mobile?: boolean }>(({ mobile }) => {
     return (
       <Block variant="outlined">
         <Empty
-          description={t('mcp.details.deployment.empty')}
-          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description={t('plugin:mcpEmpty.deployment')}
+          descriptionProps={{ fontSize: 14 }}
+          icon={Package}
+          style={{ maxWidth: 400 }}
         />
       </Block>
     );
@@ -65,28 +79,30 @@ const Deployment = memo<{ mobile?: boolean }>(({ mobile }) => {
   const getPlatformIcon = (type: string) => {
     switch (type.toLowerCase()) {
       case 'macos': {
-        return <SiApple color={theme.colorTextDescription} size={16} />;
+        return <SiApple color={cssVar.colorTextDescription} size={16} />;
       }
       case 'windows': {
-        return <Microsoft color={theme.colorTextDescription} size={16} />;
+        return <Microsoft color={cssVar.colorTextDescription} size={16} />;
       }
       case 'linux_debian': {
-        return <SiLinux color={theme.colorTextDescription} size={16} />;
+        return <SiLinux color={cssVar.colorTextDescription} size={16} />;
       }
       case 'manual': {
-        return <CodeIcon color={theme.colorTextDescription} size={16} />;
+        return <CodeIcon color={cssVar.colorTextDescription} size={16} />;
       }
       default: {
-        return <CodeIcon color={theme.colorTextDescription} size={16} />;
+        return <CodeIcon color={cssVar.colorTextDescription} size={16} />;
       }
     }
   };
 
   return (
-    <Collapse
-      activeKey={activeKey}
-      expandIconPosition={'end'}
+    <Accordion
       gap={24}
+      indicatorPlacement={'end'}
+      styles={{ content: { padding: '12px 16px' } }}
+      value={activeKey}
+      variant={'outlined'}
       items={deploymentOptions.map((item, index) => {
         let properties: {
           description?: string;
@@ -111,6 +127,34 @@ const Deployment = memo<{ mobile?: boolean }>(({ mobile }) => {
         const showSystemDependencies =
           item?.systemDependencies && item.systemDependencies.length > 0;
         return {
+          key: String(index),
+          title: (
+            <Flexbox>
+              <Title
+                icon={<InstallationIcon size={20} type={item.installationMethod} />}
+                id={`deployment-${index}`}
+                tag={
+                  <>
+                    <Tag icon={getConnectionTypeIcon(item.connection.type)}>
+                      {item.connection.type}
+                    </Tag>
+                    {item.isRecommended && (
+                      <Tag color="success">{t('mcp.details.deployment.recommended')}</Tag>
+                    )}
+                  </>
+                }
+              >
+                {t('mcp.details.deployment.installation', {
+                  method: startCase(item.installationMethod),
+                })}
+              </Title>
+              {
+                <CollapseDesc hide={activeKey.includes(String(index))}>
+                  {item.description && markdownToTxt(item.description)}
+                </CollapseDesc>
+              }
+            </Flexbox>
+          ),
           children: (
             <CollapseLayout
               items={[
@@ -130,14 +174,12 @@ const Deployment = memo<{ mobile?: boolean }>(({ mobile }) => {
                       <p style={{ margin: 0 }}>{item.description}</p>
                       {setupSteps && setupSteps.length > 0 && (
                         <Steps
-                          current={-1}
-                          direction="vertical"
-                          items={setupSteps.map((i) => ({
-                            title: <p style={{ color: theme.colorText }}>{i}</p>,
-                          }))}
-                          progressDot
-                          size={'small'}
+                          orientation="vertical"
                           style={{ marginTop: 12 }}
+                          variant="dot"
+                          items={setupSteps.map((i) => ({
+                            title: <p style={{ color: cssVar.colorText }}>{i}</p>,
+                          }))}
                         />
                       )}
                       {item.connection.command && (
@@ -153,6 +195,9 @@ const Deployment = memo<{ mobile?: boolean }>(({ mobile }) => {
                 item.connection.configSchema && {
                   children: (
                     <InlineTable
+                      dataSource={properties}
+                      pagination={false}
+                      rowKey={'name'}
                       columns={[
                         {
                           dataIndex: 'name',
@@ -160,7 +205,7 @@ const Deployment = memo<{ mobile?: boolean }>(({ mobile }) => {
                             <span
                               className={styles.code}
                               style={{
-                                color: theme.gold,
+                                color: cssVar.gold,
                               }}
                             >
                               {record.name}
@@ -177,10 +222,10 @@ const Deployment = memo<{ mobile?: boolean }>(({ mobile }) => {
                           dataIndex: 'required',
                           render: (_, record) => (
                             <Icon
-                              color={
-                                record.required ? theme.colorSuccess : theme.colorTextDescription
-                              }
                               icon={record.required ? CheckIcon : MinusIcon}
+                              color={
+                                record.required ? cssVar.colorSuccess : cssVar.colorTextDescription
+                              }
                             />
                           ),
                           title: t('mcp.details.deployment.table.required'),
@@ -190,9 +235,6 @@ const Deployment = memo<{ mobile?: boolean }>(({ mobile }) => {
                           title: t('mcp.details.deployment.table.description'),
                         },
                       ]}
-                      dataSource={properties}
-                      pagination={false}
-                      rowKey={'name'}
                     />
                   ),
                   key: 'env',
@@ -208,10 +250,10 @@ const Deployment = memo<{ mobile?: boolean }>(({ mobile }) => {
                           key: `system-dependency-${i}`,
                           label: dep.name,
                           value: (
-                            <Flexbox align="center" gap={8} horizontal>
+                            <Flexbox horizontal align="center" gap={8}>
                               <span
                                 style={{
-                                  fontFamily: theme.fontFamilyCode,
+                                  fontFamily: cssVar.fontFamilyCode,
                                   fontSize: 12,
                                 }}
                               >
@@ -219,10 +261,11 @@ const Deployment = memo<{ mobile?: boolean }>(({ mobile }) => {
                               </span>
                               {dep.installInstructions && (
                                 <Popover
-                                  arrow={false}
+                                  trigger="hover"
                                   content={
                                     <Flexbox gap={8}>
                                       <Descriptions
+                                        rows={1}
                                         items={Object.entries(dep.installInstructions).map(
                                           ([system, code]) => ({
                                             copyable: true,
@@ -234,40 +277,38 @@ const Deployment = memo<{ mobile?: boolean }>(({ mobile }) => {
                                               </span>
                                             ),
                                             style: {
-                                              fontFamily: theme.fontFamilyCode,
+                                              fontFamily: cssVar.fontFamilyCode,
                                               fontSize: 12,
                                             },
                                             value: code,
                                           }),
                                         )}
-                                        rows={1}
                                       />
                                       {dep.checkCommand && (
                                         <>
-                                          <Divider style={{ margin: 0 }} />
+                                          <Divider />
                                           <Descriptions
+                                            rows={1}
                                             items={[
                                               {
                                                 copyable: true,
                                                 key: 'check',
                                                 label: t('mcp.details.deployment.checkCommand'),
                                                 style: {
-                                                  fontFamily: theme.fontFamilyCode,
+                                                  fontFamily: cssVar.fontFamilyCode,
                                                   fontSize: 12,
                                                 },
                                                 value: dep.checkCommand,
                                               },
                                             ]}
-                                            rows={1}
                                           />
                                         </>
                                       )}
                                     </Flexbox>
                                   }
-                                  trigger={['hover']}
                                 >
                                   <ActionIcon
-                                    color={theme.colorTextDescription}
+                                    color={cssVar.colorTextDescription}
                                     icon={DownloadIcon}
                                     size={'small'}
                                   />
@@ -285,36 +326,9 @@ const Deployment = memo<{ mobile?: boolean }>(({ mobile }) => {
               ].filter(Boolean)}
             />
           ),
-          desc: (
-            <CollapseDesc hide={activeKey.includes(String(index))}>
-              {item.description && markdownToTxt(item.description)}
-            </CollapseDesc>
-          ),
-          key: String(index),
-          label: (
-            <Title
-              icon={<InstallationIcon size={20} type={item.installationMethod} />}
-              id={`deployment-${index}`}
-              tag={
-                <>
-                  <Tag icon={getConnectionTypeIcon(item.connection.type)}>
-                    {item.connection.type}
-                  </Tag>
-                  {item.isRecommended && (
-                    <Tag color="success">{t('mcp.details.deployment.recommended')}</Tag>
-                  )}
-                </>
-              }
-            >
-              {t('mcp.details.deployment.installation', {
-                method: startCase(item.installationMethod),
-              })}
-            </Title>
-          ),
         };
       })}
-      onChange={setActiveKey}
-      variant={'outlined'}
+      onValueChange={(keys) => setActiveKey?.(keys)}
     />
   );
 });

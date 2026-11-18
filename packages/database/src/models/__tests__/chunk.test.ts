@@ -2,16 +2,27 @@
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { LobeChatDatabase } from '../../type';import { uuid } from '@/utils/uuid';
+import { uuid } from '@/utils/uuid';
 
-import { chunks, embeddings, fileChunks, files, unstructuredChunks, users } from '../../schemas';
+import { getTestDB } from '../../core/getTestDB';
+import {
+  chunks,
+  embeddings,
+  fileChunks,
+  files,
+  unstructuredChunks,
+  users,
+  workspaces,
+} from '../../schemas';
+import type { LobeChatDatabase } from '../../type';
+import { INSERT_BATCH_SIZE } from '../../utils/batchInsert';
 import { ChunkModel } from '../chunk';
-import { getTestDB } from './_util';
 import { codeEmbedding, designThinkingQuery, designThinkingQuery2 } from './fixtures/embedding';
 
 const serverDB: LobeChatDatabase = await getTestDB();
 
 const userId = 'chunk-model-test-user-id';
+const workspaceId = 'chunk-model-workspace';
 const chunkModel = new ChunkModel(serverDB, userId);
 const sharedFileList = [
   {
@@ -43,6 +54,12 @@ const sharedFileList = [
 beforeEach(async () => {
   await serverDB.delete(users);
   await serverDB.insert(users).values([{ id: userId }]);
+  await serverDB.insert(workspaces).values({
+    id: workspaceId,
+    name: 'Chunk Workspace',
+    primaryOwnerId: userId,
+    slug: workspaceId,
+  });
   await serverDB.insert(files).values(sharedFileList);
 });
 
@@ -68,17 +85,17 @@ describe('ChunkModel', () => {
       expect(createdChunks[1]).toMatchObject(params[1]);
     });
 
-    // 测试空参数场景
+    // Test empty params scenario
     it('should handle empty params array', async () => {
       const result = await chunkModel.bulkCreate([], '1');
       expect(result).toHaveLength(0);
     });
 
-    // 测试事务回滚
+    // Test transaction rollback
     it('should rollback transaction on error', async () => {
       const invalidParams = [
         { text: 'Chunk 1', userId },
-        { index: 'abc', userId }, // 这会导致错误
+        { index: 'abc', userId }, // This will cause an error
       ] as any;
 
       await expect(chunkModel.bulkCreate(invalidParams, '1')).rejects.toThrow();
@@ -87,6 +104,54 @@ describe('ChunkModel', () => {
         where: eq(chunks.userId, userId),
       });
       expect(createdChunks).toHaveLength(0);
+    });
+
+    it('should insert past one statement batch, keeping order and file links', async () => {
+      const total = INSERT_BATCH_SIZE * 2 + 7;
+      const params = Array.from({ length: total }, (_, i) => ({
+        index: i,
+        text: `Chunk ${i}`,
+        userId,
+      }));
+
+      const result = await chunkModel.bulkCreate(params, '1');
+
+      expect(result.map((c) => c.index)).toEqual(params.map((p) => p.index));
+      const links = await serverDB.query.fileChunks.findMany({ where: eq(fileChunks.fileId, '1') });
+      expect(new Set(links.map((l) => l.chunkId))).toEqual(new Set(result.map((c) => c.id)));
+    });
+
+    // 50,000 rows is a real spreadsheet (one chunk per row); a single INSERT of that many rows
+    // overflows the call stack inside Drizzle's query builder.
+    it('should insert a 50,000-row file in one transaction', async () => {
+      const params = Array.from({ length: 50_000 }, (_, i) => ({
+        index: i,
+        text: `Chunk ${i}`,
+        userId,
+      }));
+
+      const result = await chunkModel.bulkCreate(params, '1');
+
+      expect(result).toHaveLength(50_000);
+      expect(result.at(-1)?.index).toBe(49_999);
+    }, 60_000);
+
+    it('should roll back every batch when a later batch fails', async () => {
+      const params = Array.from({ length: INSERT_BATCH_SIZE + 2 }, (_, i) => ({
+        index: i,
+        text: `Chunk ${i}`,
+        userId,
+      })) as any[];
+      params[INSERT_BATCH_SIZE + 1] = { index: 'abc', userId };
+
+      await expect(chunkModel.bulkCreate(params, '1')).rejects.toThrow();
+
+      expect(
+        await serverDB.query.chunks.findMany({ where: eq(chunks.userId, userId) }),
+      ).toHaveLength(0);
+      expect(
+        await serverDB.query.fileChunks.findMany({ where: eq(fileChunks.fileId, '1') }),
+      ).toHaveLength(0);
     });
   });
 
@@ -202,7 +267,7 @@ describe('ChunkModel', () => {
       expect(result[1].id).toBe(chunk2.id);
       expect(result[0].similarity).toBeGreaterThan(result[1].similarity);
     });
-    // 补充无文件 ID 的搜索场景
+    // Additional search scenario without file ID
     it('should perform semantic search without fileIds', async () => {
       const [chunk1, chunk2] = await serverDB
         .insert(chunks)
@@ -227,7 +292,7 @@ describe('ChunkModel', () => {
       expect(result).toHaveLength(2);
     });
 
-    // 测试空结果场景
+    // Test empty result scenario
     it('should return empty array when no matches found', async () => {
       const result = await chunkModel.semanticSearch({
         embedding: designThinkingQuery,
@@ -287,6 +352,44 @@ describe('ChunkModel', () => {
       expect(result[1].index).toBe(1);
       expect(result[2].index).toBe(2);
     });
+
+    it('should handle chunks with null metadata and return undefined pageNumber', async () => {
+      const fileId = '1';
+      const [chunk] = await serverDB
+        .insert(chunks)
+        .values([{ text: 'Chunk with null metadata', userId, index: 0, metadata: null }])
+        .returning();
+
+      await serverDB.insert(fileChunks).values([{ fileId, chunkId: chunk.id, userId }]);
+
+      const result = await chunkModel.findByFileId(fileId, 0);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].metadata).toBeNull();
+      expect(result[0].pageNumber).toBeUndefined();
+    });
+
+    it('should handle chunks with metadata containing pageNumber', async () => {
+      const fileId = '1';
+      const [chunk] = await serverDB
+        .insert(chunks)
+        .values([
+          {
+            text: 'Chunk with pageNumber',
+            userId,
+            index: 0,
+            metadata: { pageNumber: 5 } as any,
+          },
+        ])
+        .returning();
+
+      await serverDB.insert(fileChunks).values([{ fileId, chunkId: chunk.id, userId }]);
+
+      const result = await chunkModel.findByFileId(fileId, 0);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].pageNumber).toBe(5);
+    });
   });
 
   describe('getChunksTextByFileId', () => {
@@ -342,6 +445,27 @@ describe('ChunkModel', () => {
       const result = await chunkModel.countByFileIds([]);
 
       expect(result).toHaveLength(0);
+    });
+
+    it('should not count workspace chunks from personal scope', async () => {
+      await serverDB.insert(files).values({
+        id: 'workspace-file',
+        name: 'workspace.pdf',
+        url: 'https://example.com/workspace.pdf',
+        size: 1000,
+        fileType: 'application/pdf',
+        userId,
+        workspaceId,
+      });
+      const [chunk] = await serverDB
+        .insert(chunks)
+        .values({ text: 'Workspace Chunk', userId, workspaceId })
+        .returning();
+      await serverDB
+        .insert(fileChunks)
+        .values({ chunkId: chunk.id, fileId: 'workspace-file', userId, workspaceId });
+
+      await expect(chunkModel.countByFileIds(['workspace-file'])).resolves.toHaveLength(0);
     });
   });
 
@@ -485,7 +609,7 @@ content in Table html is below:
   });
 
   describe('semanticSearchForChat', () => {
-    // 测试空文件 ID 列表场景
+    // Test empty file ID list scenario
     it('should return empty array when fileIds is empty', async () => {
       const result = await chunkModel.semanticSearchForChat({
         embedding: designThinkingQuery,
@@ -496,14 +620,14 @@ content in Table html is below:
       expect(result).toHaveLength(0);
     });
 
-    // 测试结果限制
+    // Test result limit
     it('should limit results to 15 items', async () => {
       const fileId = '1';
       // Create 24 chunks
       const chunkResult = await serverDB
         .insert(chunks)
         .values(
-          Array(24)
+          Array.from({ length: 24 })
             .fill(0)
             .map((_, i) => ({ text: `Test Chunk ${i}`, userId })),
         )

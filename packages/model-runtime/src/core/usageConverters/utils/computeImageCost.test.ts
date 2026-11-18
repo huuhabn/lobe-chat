@@ -1,7 +1,24 @@
 import type { Pricing } from 'model-bank';
 import { describe, expect, it } from 'vitest';
 
-import { ImageGenerationParams, computeImageCost } from './computeImageCost';
+import type { ImageGenerationParams } from './computeImageCost';
+import { computeImageCost } from './computeImageCost';
+
+const createLookupPricing = (): Pricing => ({
+  units: [
+    {
+      name: 'imageGeneration',
+      strategy: 'lookup',
+      unit: 'image',
+      lookup: {
+        pricingParams: ['quality', 'size'],
+        prices: {
+          standard_1024x1024: 0.04,
+        },
+      },
+    },
+  ],
+});
 
 describe('computeImageCost', () => {
   describe('lookup pricing strategy', () => {
@@ -78,21 +95,7 @@ describe('computeImageCost', () => {
     });
 
     it('should return undefined if required lookup param is missing', () => {
-      const pricing: Pricing = {
-        units: [
-          {
-            name: 'imageGeneration',
-            strategy: 'lookup',
-            unit: 'image',
-            lookup: {
-              pricingParams: ['quality', 'size'],
-              prices: {
-                standard_1024x1024: 0.04,
-              },
-            },
-          },
-        ],
-      };
+      const pricing: Pricing = createLookupPricing();
 
       const params: ImageGenerationParams = {
         quality: 'standard',
@@ -105,21 +108,7 @@ describe('computeImageCost', () => {
     });
 
     it('should return undefined if lookup key has no matching price', () => {
-      const pricing: Pricing = {
-        units: [
-          {
-            name: 'imageGeneration',
-            strategy: 'lookup',
-            unit: 'image',
-            lookup: {
-              pricingParams: ['quality', 'size'],
-              prices: {
-                standard_1024x1024: 0.04,
-              },
-            },
-          },
-        ],
-      };
+      const pricing: Pricing = createLookupPricing();
 
       const params: ImageGenerationParams = {
         quality: 'hd',
@@ -294,21 +283,7 @@ describe('computeImageCost', () => {
     });
 
     it('should handle null lookup param value', () => {
-      const pricing: Pricing = {
-        units: [
-          {
-            name: 'imageGeneration',
-            strategy: 'lookup',
-            unit: 'image',
-            lookup: {
-              pricingParams: ['quality', 'size'],
-              prices: {
-                standard_1024x1024: 0.04,
-              },
-            },
-          },
-        ],
-      };
+      const pricing: Pricing = createLookupPricing();
 
       const params: ImageGenerationParams = {
         quality: null as any, // null value for testing
@@ -339,6 +314,60 @@ describe('computeImageCost', () => {
       expect(result).toBeDefined();
       expect(result?.totalCost).toBe(0);
       expect(result?.totalCredits).toBe(0);
+    });
+  });
+
+  describe('per-image input fee', () => {
+    const pricing: Pricing = {
+      units: [
+        {
+          name: 'imageGeneration',
+          strategy: 'lookup',
+          unit: 'image',
+          lookup: {
+            pricingParams: ['resolution'],
+            prices: { '1k': 0.04, '2k': 0.08 },
+          },
+        },
+        { name: 'imageInput', rate: 0.01, strategy: 'fixed', unit: 'image' },
+      ],
+    };
+
+    it('adds the input fee for every reference image on each generated image', () => {
+      const result = computeImageCost(pricing, { imageUrls: ['a', 'b'], resolution: '1k' }, 2);
+
+      // (0.04 + 2 × 0.01) × 2 images
+      expect(result?.totalCost).toBeCloseTo(0.12);
+      expect(result?.breakdown).toMatchObject({ inputImageCount: 2, pricePerImage: 0.04 });
+      expect(result?.breakdown?.inputImageCost).toBeCloseTo(0.02);
+    });
+
+    it('counts a single imageUrl as one input image', () => {
+      const result = computeImageCost(pricing, { imageUrl: 'a', resolution: '2k' }, 1);
+
+      expect(result?.totalCost).toBeCloseTo(0.09);
+    });
+
+    it('charges no input fee for text-to-image', () => {
+      const result = computeImageCost(pricing, { imageUrls: [], resolution: '1k' }, 1);
+
+      expect(result?.totalCost).toBe(0.04);
+      expect(result?.breakdown?.inputImageCount).toBeUndefined();
+    });
+
+    it('ignores token-based imageInput units', () => {
+      const result = computeImageCost(
+        {
+          units: [
+            { name: 'imageGeneration', rate: 0.04, strategy: 'fixed', unit: 'image' },
+            { name: 'imageInput', rate: 8, strategy: 'fixed', unit: 'millionTokens' },
+          ],
+        },
+        { imageUrls: ['a'] },
+        1,
+      );
+
+      expect(result?.totalCost).toBe(0.04);
     });
   });
 });

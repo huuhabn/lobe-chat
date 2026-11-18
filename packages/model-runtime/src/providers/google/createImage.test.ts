@@ -1,21 +1,68 @@
-// @vitest-environment edge-runtime
-import { GoogleGenAI } from '@google/genai';
+// @vitest-environment node
+import type { GoogleGenAI } from '@google/genai';
+import { MediaModality } from '@google/genai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { CreateImagePayload } from '../../types/image';
+import type { CreateImagePayload } from '../../types/image';
 import * as imageToBase64Module from '../../utils/imageToBase64';
-import { createGoogleImage } from './createImage';
+import {
+  createGoogleImage,
+  GOOGLE_IMAGE_GENERATION_SYSTEM_PROMPT,
+  GOOGLE_IMAGE_GENERATION_USER_PROMPT_CONTRACT,
+} from './createImage';
 
 const provider = 'google';
 const bizErrorType = 'ProviderBizError';
+const contentPolicyErrorType = 'ProviderContentPolicyViolation';
+const noImageErrorType = 'ProviderNoImageGenerated';
 const invalidErrorType = 'InvalidProviderAPIKey';
+const getModelPricingMock = vi.hoisted(() => vi.fn());
+const expectGoogleImagePromptPart = (prompt: string) => ({
+  text: expect.stringContaining(
+    [
+      GOOGLE_IMAGE_GENERATION_USER_PROMPT_CONTRACT,
+      '<user_request>',
+      prompt,
+      '</user_request>',
+      '</image_generation_request>',
+    ].join('\n'),
+  ),
+});
+
+const createImagenResponse = (imageBytes: string) => ({
+  generatedImages: [
+    {
+      image: { imageBytes },
+    },
+  ],
+});
+
+const createGeminiImageResponse = (data: string) => ({
+  candidates: [
+    {
+      content: {
+        parts: [
+          {
+            inlineData: { data, mimeType: 'image/png' },
+          },
+        ],
+      },
+    },
+  ],
+});
 
 // Mock the console.error to avoid polluting test output
 vi.spyOn(console, 'error').mockImplementation(() => {});
 
+vi.mock('../../utils/getModelPricing', () => ({
+  getModelPricing: getModelPricingMock,
+}));
+
 let mockClient: GoogleGenAI;
 
 beforeEach(() => {
+  getModelPricingMock.mockReset();
+  getModelPricingMock.mockResolvedValue(undefined);
   mockClient = {
     models: {
       generateImages: vi.fn(),
@@ -30,15 +77,7 @@ describe('createGoogleImage', () => {
       // Arrange - Use real base64 image data (5x5 red pixel PNG)
       const realBase64ImageData =
         'iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg==';
-      const mockImageResponse = {
-        generatedImages: [
-          {
-            image: {
-              imageBytes: realBase64ImageData,
-            },
-          },
-        ],
-      };
+      const mockImageResponse = createImagenResponse(realBase64ImageData);
       vi.spyOn(mockClient.models, 'generateImages').mockResolvedValue(mockImageResponse as any);
 
       const payload: CreateImagePayload = {
@@ -70,15 +109,7 @@ describe('createGoogleImage', () => {
       // Arrange - Use real base64 data
       const realBase64Data =
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
-      const mockImageResponse = {
-        generatedImages: [
-          {
-            image: {
-              imageBytes: realBase64Data,
-            },
-          },
-        ],
-      };
+      const mockImageResponse = createImagenResponse(realBase64Data);
       vi.spyOn(mockClient.models, 'generateImages').mockResolvedValue(mockImageResponse as any);
 
       const payload: CreateImagePayload = {
@@ -107,15 +138,7 @@ describe('createGoogleImage', () => {
       // Arrange
       const realBase64Data =
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
-      const mockImageResponse = {
-        generatedImages: [
-          {
-            image: {
-              imageBytes: realBase64Data,
-            },
-          },
-        ],
-      };
+      const mockImageResponse = createImagenResponse(realBase64Data);
       vi.spyOn(mockClient.models, 'generateImages').mockResolvedValue(mockImageResponse as any);
 
       const payload: CreateImagePayload = {
@@ -201,7 +224,7 @@ describe('createGoogleImage', () => {
         // Act & Assert - Test error behavior rather than specific text
         await expect(createGoogleImage(mockClient, provider, payload)).rejects.toEqual(
           expect.objectContaining({
-            errorType: bizErrorType,
+            errorType: noImageErrorType,
             provider,
           }),
         );
@@ -224,7 +247,7 @@ describe('createGoogleImage', () => {
         // Act & Assert
         await expect(createGoogleImage(mockClient, provider, payload)).rejects.toEqual(
           expect.objectContaining({
-            errorType: bizErrorType,
+            errorType: noImageErrorType,
             provider,
           }),
         );
@@ -251,7 +274,7 @@ describe('createGoogleImage', () => {
         // Act & Assert
         await expect(createGoogleImage(mockClient, provider, payload)).rejects.toEqual(
           expect.objectContaining({
-            errorType: bizErrorType,
+            errorType: noImageErrorType,
             provider,
           }),
         );
@@ -301,15 +324,7 @@ describe('createGoogleImage', () => {
         // Arrange
         const realBase64Data =
           'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
-        const mockImageResponse = {
-          generatedImages: [
-            {
-              image: {
-                imageBytes: realBase64Data,
-              },
-            },
-          ],
-        };
+        const mockImageResponse = createImagenResponse(realBase64Data);
         vi.spyOn(mockClient.models, 'generateImages').mockResolvedValue(mockImageResponse as any);
 
         const payload: CreateImagePayload = {
@@ -341,26 +356,11 @@ describe('createGoogleImage', () => {
       // Arrange
       const realBase64ImageData =
         'iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg==';
-      const mockContentResponse = {
-        candidates: [
-          {
-            content: {
-              parts: [
-                {
-                  inlineData: {
-                    data: realBase64ImageData,
-                    mimeType: 'image/png',
-                  },
-                },
-              ],
-            },
-          },
-        ],
-      };
+      const mockContentResponse = createGeminiImageResponse(realBase64ImageData);
       vi.spyOn(mockClient.models, 'generateContent').mockResolvedValue(mockContentResponse as any);
 
       const payload: CreateImagePayload = {
-        model: 'gemini-2.5-flash-image-preview:image',
+        model: 'gemini-2.5-flash-image:image',
         params: {
           prompt: 'Create a beautiful sunset landscape',
         },
@@ -374,17 +374,327 @@ describe('createGoogleImage', () => {
         contents: [
           {
             role: 'user',
-            parts: [{ text: 'Create a beautiful sunset landscape' }],
+            parts: [expectGoogleImagePromptPart('Create a beautiful sunset landscape')],
           },
         ],
-        model: 'gemini-2.5-flash-image-preview',
+        model: 'gemini-2.5-flash-image',
         config: {
-          responseModalities: ['Image'],
+          responseModalities: ['TEXT', 'IMAGE'],
+          systemInstruction: GOOGLE_IMAGE_GENERATION_SYSTEM_PROMPT,
         },
       });
       expect(result).toEqual({
         imageUrl: `data:image/png;base64,${realBase64ImageData}`,
       });
+    });
+
+    it('should return the final image instead of an interim thought image', async () => {
+      // Nano Banana 2.1 on Vertex AI returns a draft `thought` image before the final image.
+      const mockContentResponse = {
+        candidates: [
+          {
+            content: {
+              parts: [
+                { inlineData: { data: 'draft-image', mimeType: 'image/png' }, thought: true },
+                { inlineData: { data: 'final-image', mimeType: 'image/png' } },
+              ],
+            },
+          },
+        ],
+      };
+      vi.spyOn(mockClient.models, 'generateContent').mockResolvedValue(mockContentResponse as any);
+
+      const result = await createGoogleImage(mockClient, provider, {
+        model: 'gemini-nano-banana-2.1:image',
+        params: { prompt: 'A red apple' },
+      });
+
+      expect(result).toEqual({ imageUrl: 'data:image/png;base64,final-image' });
+    });
+
+    it('should fall back to a thought image when no final image is returned', async () => {
+      const mockContentResponse = {
+        candidates: [
+          {
+            content: {
+              parts: [
+                { inlineData: { data: 'draft-image', mimeType: 'image/png' }, thought: true },
+              ],
+            },
+          },
+        ],
+      };
+      vi.spyOn(mockClient.models, 'generateContent').mockResolvedValue(mockContentResponse as any);
+
+      const result = await createGoogleImage(mockClient, provider, {
+        model: 'gemini-nano-banana-2.1:image',
+        params: { prompt: 'A red apple' },
+      });
+
+      expect(result).toEqual({ imageUrl: 'data:image/png;base64,draft-image' });
+    });
+
+    it('should include text output tokens in successful image usage cost', async () => {
+      // Arrange
+      getModelPricingMock.mockResolvedValueOnce({
+        units: [
+          { name: 'imageOutput', rate: 120, strategy: 'fixed', unit: 'millionTokens' },
+          { name: 'textInput', rate: 2, strategy: 'fixed', unit: 'millionTokens' },
+          { name: 'textOutput', rate: 12, strategy: 'fixed', unit: 'millionTokens' },
+        ],
+      });
+      const realBase64ImageData =
+        'iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg==';
+      const mockContentResponse = {
+        candidates: [
+          {
+            content: {
+              parts: [
+                { text: 'Here is the generated image.' },
+                {
+                  inlineData: {
+                    data: realBase64ImageData,
+                    mimeType: 'image/png',
+                  },
+                },
+              ],
+            },
+          },
+        ],
+        usageMetadata: {
+          candidatesTokenCount: 1500,
+          candidatesTokensDetails: [
+            { modality: MediaModality.TEXT, tokenCount: 20 },
+            { modality: MediaModality.IMAGE, tokenCount: 1480 },
+          ],
+          promptTokenCount: 100,
+          promptTokensDetails: [{ modality: MediaModality.TEXT, tokenCount: 100 }],
+          totalTokenCount: 1600,
+        },
+      };
+      vi.spyOn(mockClient.models, 'generateContent').mockResolvedValue(mockContentResponse as any);
+
+      const payload: CreateImagePayload = {
+        model: 'gemini-3-pro-image-preview:image',
+        params: {
+          prompt: 'Create a beautiful sunset landscape',
+        },
+      };
+
+      // Act
+      const result = await createGoogleImage(mockClient, provider, payload);
+
+      // Assert
+      expect(getModelPricingMock).toHaveBeenCalledWith(
+        'gemini-3-pro-image-preview:image',
+        provider,
+        undefined,
+      );
+      expect(result.modelUsage).toMatchObject({
+        cost: 0.178_04,
+        inputTextTokens: 100,
+        outputImageTokens: 1480,
+        outputTextTokens: 20,
+        totalInputTokens: 100,
+        totalOutputTokens: 1500,
+        totalTokens: 1600,
+      });
+    });
+
+    it('should not include imageConfig when aspectRatio is auto', async () => {
+      // Arrange
+      const realBase64ImageData =
+        'iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg==';
+      const mockContentResponse = createGeminiImageResponse(realBase64ImageData);
+      vi.spyOn(mockClient.models, 'generateContent').mockResolvedValue(mockContentResponse as any);
+
+      const payload: CreateImagePayload = {
+        model: 'gemini-2.5-flash-image:image',
+        params: {
+          prompt: 'Create a beautiful sunset landscape',
+          aspectRatio: 'auto',
+        },
+      };
+
+      // Act
+      await createGoogleImage(mockClient, provider, payload);
+
+      // Assert - imageConfig should NOT be included when aspectRatio is 'auto'
+      expect(mockClient.models.generateContent).toHaveBeenCalledWith({
+        contents: [
+          {
+            role: 'user',
+            parts: [expectGoogleImagePromptPart('Create a beautiful sunset landscape')],
+          },
+        ],
+        model: 'gemini-2.5-flash-image',
+        config: {
+          responseModalities: ['TEXT', 'IMAGE'],
+          systemInstruction: GOOGLE_IMAGE_GENERATION_SYSTEM_PROMPT,
+        },
+      });
+    });
+
+    // Regression: nano banana 4K selection used to be silently dropped because
+    // imageSize was gated on aspectRatio !== 'auto'. See .
+    it('should pass imageSize when resolution is set even if aspectRatio is auto', async () => {
+      // Arrange
+      const realBase64ImageData =
+        'iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg==';
+      const mockContentResponse = createGeminiImageResponse(realBase64ImageData);
+      vi.spyOn(mockClient.models, 'generateContent').mockResolvedValue(mockContentResponse as any);
+
+      const payload: CreateImagePayload = {
+        model: 'gemini-2.5-flash-image:image',
+        params: {
+          prompt: 'Create a beautiful sunset landscape',
+          aspectRatio: 'auto',
+          resolution: '4K',
+        },
+      };
+
+      // Act
+      await createGoogleImage(mockClient, provider, payload);
+
+      // Assert - imageConfig.imageSize must reach Google when only resolution is set
+      expect(mockClient.models.generateContent).toHaveBeenCalledWith({
+        contents: [
+          {
+            role: 'user',
+            parts: [expectGoogleImagePromptPart('Create a beautiful sunset landscape')],
+          },
+        ],
+        model: 'gemini-2.5-flash-image',
+        config: {
+          responseModalities: ['TEXT', 'IMAGE'],
+          systemInstruction: GOOGLE_IMAGE_GENERATION_SYSTEM_PROMPT,
+          imageConfig: {
+            imageSize: '4K',
+          },
+        },
+      });
+    });
+
+    it('should pass both aspectRatio and imageSize when both are set', async () => {
+      // Arrange
+      const realBase64ImageData =
+        'iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg==';
+      const mockContentResponse = createGeminiImageResponse(realBase64ImageData);
+      vi.spyOn(mockClient.models, 'generateContent').mockResolvedValue(mockContentResponse as any);
+
+      const payload: CreateImagePayload = {
+        model: 'gemini-2.5-flash-image:image',
+        params: {
+          prompt: 'Cinematic widescreen shot',
+          aspectRatio: '16:9',
+          resolution: '2K',
+        },
+      };
+
+      // Act
+      await createGoogleImage(mockClient, provider, payload);
+
+      // Assert
+      expect(mockClient.models.generateContent).toHaveBeenCalledWith({
+        contents: [
+          {
+            role: 'user',
+            parts: [expectGoogleImagePromptPart('Cinematic widescreen shot')],
+          },
+        ],
+        model: 'gemini-2.5-flash-image',
+        config: {
+          responseModalities: ['TEXT', 'IMAGE'],
+          systemInstruction: GOOGLE_IMAGE_GENERATION_SYSTEM_PROMPT,
+          imageConfig: {
+            aspectRatio: '16:9',
+            imageSize: '2K',
+          },
+        },
+      });
+    });
+
+    it('should pass aspectRatio only when resolution is unset', async () => {
+      // Arrange
+      const realBase64ImageData =
+        'iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg==';
+      const mockContentResponse = createGeminiImageResponse(realBase64ImageData);
+      vi.spyOn(mockClient.models, 'generateContent').mockResolvedValue(mockContentResponse as any);
+
+      const payload: CreateImagePayload = {
+        model: 'gemini-2.5-flash-image:image',
+        params: {
+          prompt: 'Portrait orientation',
+          aspectRatio: '9:16',
+        },
+      };
+
+      // Act
+      await createGoogleImage(mockClient, provider, payload);
+
+      // Assert
+      expect(mockClient.models.generateContent).toHaveBeenCalledWith({
+        contents: [
+          {
+            role: 'user',
+            parts: [expectGoogleImagePromptPart('Portrait orientation')],
+          },
+        ],
+        model: 'gemini-2.5-flash-image',
+        config: {
+          responseModalities: ['TEXT', 'IMAGE'],
+          systemInstruction: GOOGLE_IMAGE_GENERATION_SYSTEM_PROMPT,
+          imageConfig: {
+            aspectRatio: '9:16',
+          },
+        },
+      });
+    });
+
+    it('should define image-only behavior in the image generation prompts', () => {
+      expect(GOOGLE_IMAGE_GENERATION_SYSTEM_PROMPT).toContain('<image_generation_contract>');
+      expect(GOOGLE_IMAGE_GENERATION_SYSTEM_PROMPT).toContain('Return an image whenever possible');
+      expect(GOOGLE_IMAGE_GENERATION_SYSTEM_PROMPT).toContain(
+        'policy, moderation, or safety prevents generation',
+      );
+      expect(GOOGLE_IMAGE_GENERATION_SYSTEM_PROMPT).toContain(
+        'Create a relevant visual interpretation',
+      );
+      expect(GOOGLE_IMAGE_GENERATION_SYSTEM_PROMPT).toContain('return text only: 1');
+      expect(GOOGLE_IMAGE_GENERATION_USER_PROMPT_CONTRACT).toContain('<image_generation_request>');
+      expect(GOOGLE_IMAGE_GENERATION_USER_PROMPT_CONTRACT).toContain(
+        'Generate an image whenever possible',
+      );
+    });
+
+    it('should escape user prompts inside the XML request wrapper', async () => {
+      // Arrange
+      const realBase64ImageData =
+        'iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg==';
+      const mockContentResponse = createGeminiImageResponse(realBase64ImageData);
+      vi.spyOn(mockClient.models, 'generateContent').mockResolvedValue(mockContentResponse as any);
+
+      const payload: CreateImagePayload = {
+        model: 'gemini-2.5-flash-image:image',
+        params: {
+          prompt: 'Create <cat & dog>',
+        },
+      };
+
+      // Act
+      await createGoogleImage(mockClient, provider, payload);
+
+      // Assert
+      expect(mockClient.models.generateContent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          contents: [
+            {
+              role: 'user',
+              parts: [expectGoogleImagePromptPart('Create &lt;cat &amp; dog&gt;')],
+            },
+          ],
+        }),
+      );
     });
 
     it('should support image editing with base64 imageUrl', async () => {
@@ -394,26 +704,11 @@ describe('createGoogleImage', () => {
       const outputImageBase64 =
         'iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg==';
 
-      const mockContentResponse = {
-        candidates: [
-          {
-            content: {
-              parts: [
-                {
-                  inlineData: {
-                    data: outputImageBase64,
-                    mimeType: 'image/png',
-                  },
-                },
-              ],
-            },
-          },
-        ],
-      };
+      const mockContentResponse = createGeminiImageResponse(outputImageBase64);
       vi.spyOn(mockClient.models, 'generateContent').mockResolvedValue(mockContentResponse as any);
 
       const payload: CreateImagePayload = {
-        model: 'gemini-2.5-flash-image-preview:image',
+        model: 'gemini-2.5-flash-image:image',
         params: {
           prompt: 'Add a red rose to this image',
           imageUrl: `data:image/png;base64,${inputImageBase64}`,
@@ -429,7 +724,7 @@ describe('createGoogleImage', () => {
           {
             role: 'user',
             parts: [
-              { text: 'Add a red rose to this image' },
+              expectGoogleImagePromptPart('Add a red rose to this image'),
               {
                 inlineData: {
                   data: inputImageBase64,
@@ -439,9 +734,10 @@ describe('createGoogleImage', () => {
             ],
           },
         ],
-        model: 'gemini-2.5-flash-image-preview',
+        model: 'gemini-2.5-flash-image',
         config: {
-          responseModalities: ['Image'],
+          responseModalities: ['TEXT', 'IMAGE'],
+          systemInstruction: GOOGLE_IMAGE_GENERATION_SYSTEM_PROMPT,
         },
       });
       expect(result).toEqual({
@@ -462,26 +758,11 @@ describe('createGoogleImage', () => {
         mimeType: 'image/jpeg',
       });
 
-      const mockContentResponse = {
-        candidates: [
-          {
-            content: {
-              parts: [
-                {
-                  inlineData: {
-                    data: outputImageBase64,
-                    mimeType: 'image/png',
-                  },
-                },
-              ],
-            },
-          },
-        ],
-      };
+      const mockContentResponse = createGeminiImageResponse(outputImageBase64);
       vi.spyOn(mockClient.models, 'generateContent').mockResolvedValue(mockContentResponse as any);
 
       const payload: CreateImagePayload = {
-        model: 'gemini-2.5-flash-image-preview:image',
+        model: 'gemini-2.5-flash-image:image',
         params: {
           prompt: 'Change the background to blue sky',
           imageUrl: 'https://example.com/image.jpg',
@@ -500,7 +781,7 @@ describe('createGoogleImage', () => {
           {
             role: 'user',
             parts: [
-              { text: 'Change the background to blue sky' },
+              expectGoogleImagePromptPart('Change the background to blue sky'),
               {
                 inlineData: {
                   data: inputImageBase64,
@@ -510,9 +791,10 @@ describe('createGoogleImage', () => {
             ],
           },
         ],
-        model: 'gemini-2.5-flash-image-preview',
+        model: 'gemini-2.5-flash-image',
         config: {
-          responseModalities: ['Image'],
+          responseModalities: ['TEXT', 'IMAGE'],
+          systemInstruction: GOOGLE_IMAGE_GENERATION_SYSTEM_PROMPT,
         },
       });
       expect(result).toEqual({
@@ -525,26 +807,11 @@ describe('createGoogleImage', () => {
       const outputImageBase64 =
         'iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg==';
 
-      const mockContentResponse = {
-        candidates: [
-          {
-            content: {
-              parts: [
-                {
-                  inlineData: {
-                    data: outputImageBase64,
-                    mimeType: 'image/png',
-                  },
-                },
-              ],
-            },
-          },
-        ],
-      };
+      const mockContentResponse = createGeminiImageResponse(outputImageBase64);
       vi.spyOn(mockClient.models, 'generateContent').mockResolvedValue(mockContentResponse as any);
 
       const payload: CreateImagePayload = {
-        model: 'gemini-2.5-flash-image-preview:image',
+        model: 'gemini-2.5-flash-image:image',
         params: {
           prompt: 'Generate a colorful abstract pattern',
           imageUrl: null,
@@ -559,12 +826,13 @@ describe('createGoogleImage', () => {
         contents: [
           {
             role: 'user',
-            parts: [{ text: 'Generate a colorful abstract pattern' }],
+            parts: [expectGoogleImagePromptPart('Generate a colorful abstract pattern')],
           },
         ],
-        model: 'gemini-2.5-flash-image-preview',
+        model: 'gemini-2.5-flash-image',
         config: {
-          responseModalities: ['Image'],
+          responseModalities: ['TEXT', 'IMAGE'],
+          systemInstruction: GOOGLE_IMAGE_GENERATION_SYSTEM_PROMPT,
         },
       });
       expect(result).toEqual({
@@ -593,19 +861,224 @@ describe('createGoogleImage', () => {
         );
 
         const payload: CreateImagePayload = {
-          model: 'gemini-2.5-flash-image-preview:image',
+          model: 'gemini-2.5-flash-image:image',
           params: {
             prompt: 'Create inappropriate content',
           },
         };
 
         // Act & Assert
-        await expect(createGoogleImage(mockClient, provider, payload)).rejects.toEqual(
-          expect.objectContaining({
-            errorType: bizErrorType,
-            provider,
-          }),
+        await expect(createGoogleImage(mockClient, provider, payload)).rejects.toMatchObject({
+          error: {
+            message: 'I cannot generate an image.',
+            reasonCode: 'google_image_text_only_response',
+          },
+          errorType: noImageErrorType,
+          provider,
+        });
+      });
+
+      it('should preserve Google no-image diagnostic context without serializing text parts', async () => {
+        // Arrange
+        const mockContentResponse = {
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    text: 'I can describe the image, but no image was returned.',
+                  },
+                ],
+              },
+              finishReason: 'NO_IMAGE',
+              finishMessage: 'The model did not produce an image.',
+              safetyRatings: [
+                {
+                  blocked: false,
+                  category: 'HARM_CATEGORY_DANGEROUS_CONTENT',
+                  probability: 'NEGLIGIBLE',
+                },
+              ],
+            },
+          ],
+          modelVersion: 'gemini-3-pro-image-preview',
+          responseId: 'response-1',
+        };
+        vi.spyOn(mockClient.models, 'generateContent').mockResolvedValue(
+          mockContentResponse as any,
         );
+
+        const payload: CreateImagePayload = {
+          model: 'gemini-3-pro-image-preview:image',
+          params: {
+            prompt: 'Generate an image',
+          },
+        };
+
+        // Act
+        let error: any;
+        try {
+          await createGoogleImage(mockClient, provider, payload);
+        } catch (e) {
+          error = e;
+        }
+
+        // Assert
+        expect(error).toMatchObject({
+          errorType: noImageErrorType,
+          provider,
+        });
+        expect(error.providerResponse).toMatchObject({
+          candidates: [
+            {
+              finishMessage: 'The model did not produce an image.',
+              finishReason: 'NO_IMAGE',
+            },
+          ],
+          responseId: 'response-1',
+        });
+        expect(JSON.stringify(error)).not.toContain('I can describe the image');
+      });
+
+      it('should surface text-only image responses as provider no-image reasons', async () => {
+        // Arrange
+        const mockContentResponse = {
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    text: 'The uploaded image shows a cartoon portrait.',
+                  },
+                ],
+              },
+              finishReason: 'STOP',
+            },
+          ],
+          modelVersion: 'gemini-3-pro-image-preview',
+          responseId: 'text-only-response',
+        };
+        vi.spyOn(mockClient.models, 'generateContent').mockResolvedValue(
+          mockContentResponse as any,
+        );
+
+        const payload: CreateImagePayload = {
+          model: 'gemini-3-pro-image-preview:image',
+          params: {
+            imageUrl: 'data:image/png;base64,abc123',
+            prompt: 'Explain this image',
+          },
+        };
+
+        // Act
+        let error: any;
+        try {
+          await createGoogleImage(mockClient, provider, payload);
+        } catch (e) {
+          error = e;
+        }
+
+        // Assert
+        expect(error).toMatchObject({
+          error: {
+            message: 'The uploaded image shows a cartoon portrait.',
+            reasonCode: 'google_image_text_only_response',
+          },
+          errorType: noImageErrorType,
+          provider,
+        });
+        expect(error.providerResponse).toMatchObject({
+          candidates: [
+            {
+              finishReason: 'STOP',
+            },
+          ],
+          responseId: 'text-only-response',
+        });
+        expect(JSON.stringify(error)).toContain('cartoon portrait');
+      });
+
+      it('should classify the text-only policy signal as a content policy violation', async () => {
+        // Arrange
+        const mockContentResponse = {
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    text: '1',
+                  },
+                ],
+              },
+              finishReason: 'STOP',
+            },
+          ],
+          responseId: 'text-policy-signal-response',
+        };
+        vi.spyOn(mockClient.models, 'generateContent').mockResolvedValue(
+          mockContentResponse as any,
+        );
+
+        const payload: CreateImagePayload = {
+          model: 'gemini-3-pro-image-preview:image',
+          params: {
+            prompt: 'Generate unsafe content',
+          },
+        };
+
+        // Act & Assert
+        await expect(createGoogleImage(mockClient, provider, payload)).rejects.toMatchObject({
+          error: {
+            providerReason: 'TEXT_POLICY_REFUSAL',
+            reasonCode: 'google_image_content_policy_violation',
+            responseId: 'text-policy-signal-response',
+          },
+          errorType: contentPolicyErrorType,
+          provider,
+        });
+      });
+
+      it('should classify Google image safety finish reasons as content policy violations', async () => {
+        // Arrange
+        const mockContentResponse = {
+          candidates: [
+            {
+              content: {},
+              finishReason: 'IMAGE_PROHIBITED_CONTENT',
+              finishMessage: 'The generated image was blocked.',
+            },
+          ],
+          responseId: 'safety-response',
+        };
+        vi.spyOn(mockClient.models, 'generateContent').mockResolvedValue(
+          mockContentResponse as any,
+        );
+
+        const payload: CreateImagePayload = {
+          model: 'gemini-3-pro-image-preview:image',
+          params: {
+            prompt: 'Generate an image',
+          },
+        };
+
+        // Act & Assert
+        await expect(createGoogleImage(mockClient, provider, payload)).rejects.toMatchObject({
+          error: {
+            providerReason: 'IMAGE_PROHIBITED_CONTENT',
+            reasonCode: 'google_image_content_policy_violation',
+            responseId: 'safety-response',
+          },
+          errorType: contentPolicyErrorType,
+          provider,
+          providerResponse: {
+            candidates: [
+              {
+                finishReason: 'IMAGE_PROHIBITED_CONTENT',
+              },
+            ],
+            responseId: 'safety-response',
+          },
+        });
       });
 
       it('should throw error when response is malformed', async () => {
@@ -618,7 +1091,7 @@ describe('createGoogleImage', () => {
         );
 
         const payload: CreateImagePayload = {
-          model: 'gemini-2.5-flash-image-preview:image',
+          model: 'gemini-2.5-flash-image:image',
           params: {
             prompt: 'Generate an image',
           },
@@ -627,7 +1100,7 @@ describe('createGoogleImage', () => {
         // Act & Assert
         await expect(createGoogleImage(mockClient, provider, payload)).rejects.toEqual(
           expect.objectContaining({
-            errorType: bizErrorType,
+            errorType: noImageErrorType,
             provider,
           }),
         );
@@ -636,7 +1109,7 @@ describe('createGoogleImage', () => {
       it('should throw error for unsupported image URL format', async () => {
         // Arrange
         const payload: CreateImagePayload = {
-          model: 'gemini-2.5-flash-image-preview:image',
+          model: 'gemini-2.5-flash-image:image',
           params: {
             prompt: 'Edit this image',
             imageUrl: 'ftp://example.com/image.jpg',

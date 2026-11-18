@@ -1,30 +1,53 @@
-import { MouseEventHandler, use, useCallback } from 'react';
+import { type MouseEventHandler } from 'react';
+import { useCallback } from 'react';
 
-import { useChatStore } from '@/store/chat';
+import { useCanEditCodexMessage } from '@/hooks/useCanEditCodexMessage';
+import { usePermission } from '@/hooks/usePermission';
+import { useAgentStore } from '@/store/agent';
+import { agentByIdSelectors } from '@/store/agent/selectors';
 
-import { VirtuosoContext } from '../components/VirtualizedList/VirtuosoContext';
+import { useConversationStore } from '../store';
 
 interface UseDoubleClickEditProps {
   disableEditing?: boolean;
   error: any;
   id: string;
-  index: number;
   role: string;
 }
 
+/**
+ * Opens the message editor through the Alt-double-click shortcut.
+ *
+ * Use when:
+ * - Attaching the existing edit shortcut to a conversation message.
+ *
+ * Expects:
+ * - The owning conversation provider and current content permissions.
+ *
+ * Returns:
+ * - A handler that opens supported edits and ignores unavailable user edits.
+ */
 export const useDoubleClickEdit = ({
   disableEditing,
   role,
   error,
   id,
-  index,
 }: UseDoubleClickEditProps) => {
-  const [toggleMessageEditing] = useChatStore((s) => [s.toggleMessageEditing]);
-  const virtuosoRef = use(VirtuosoContext);
+  const { allowed: canEdit } = usePermission('edit_own_content');
+  const toggleMessageEditing = useConversationStore((s) => s.toggleMessageEditing);
+  const [agentId, topicId] = useConversationStore((s) => [s.context.agentId, s.context.topicId]);
+  const canEditCodex = useCanEditCodexMessage(agentId ?? undefined, topicId);
+  const isCodex = useAgentStore((s) =>
+    agentId
+      ? agentByIdSelectors.getAgencyConfigById(agentId)(s)?.heterogeneousProvider?.type === 'codex'
+      : false,
+  );
 
   return useCallback<MouseEventHandler<HTMLDivElement>>(
     (e) => {
       if (
+        !canEdit ||
+        (role === 'user' && isCodex && !canEditCodex) ||
         disableEditing ||
         error ||
         id === 'default' ||
@@ -34,9 +57,7 @@ export const useDoubleClickEdit = ({
         return;
 
       toggleMessageEditing(id, true);
-
-      virtuosoRef?.current?.scrollIntoView({ align: 'start', behavior: 'auto', index });
     },
-    [role, disableEditing],
+    [role, canEdit, canEditCodex, isCodex, disableEditing, error, toggleMessageEditing, id],
   );
 };

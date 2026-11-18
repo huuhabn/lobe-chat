@@ -1,17 +1,40 @@
 import { ModelProvider } from 'model-bank';
 
-import {
-  OpenAICompatibleFactoryOptions,
-  createOpenAICompatibleRuntime,
-} from '../../core/openaiCompatibleFactory';
+import type { OpenAICompatibleFactoryOptions } from '../../core/openaiCompatible';
+import { createOpenAICompatibleRuntime } from '../../core/openaiCompatible';
 import { SparkAIStream, transformSparkResponseToStream } from '../../core/streams';
-import { ChatStreamPayload } from '../../types';
+import type { ChatStreamPayload } from '../../types';
+
+const getBaseURLByModel = (model: string): string => {
+  switch (model) {
+    case 'spark-x2-flash': {
+      return 'https://spark-api-open.xf-yun.com/agent/v1';
+    }
+
+    case 'spark-x2': {
+      return 'https://spark-api-open.xf-yun.com/x2';
+    }
+
+    case 'spark-x1.5': {
+      return 'https://spark-api-open.xf-yun.com/v2';
+    }
+
+    default: {
+      return 'https://spark-api-open.xf-yun.com/v1';
+    }
+  }
+};
 
 export const params = {
   baseURL: 'https://spark-api-open.xf-yun.com/v1',
   chatCompletion: {
-    handlePayload: (payload: ChatStreamPayload) => {
-      const { enabledSearch, tools, ...rest } = payload;
+    handlePayload: (payload: ChatStreamPayload, options) => {
+      const { deploymentName, enabledSearch, model, thinking, tools, ...rest } = payload;
+
+      const requestModel = deploymentName ?? model;
+
+      const baseURL = getBaseURLByModel(model);
+      if (options) options.baseURL = baseURL;
 
       const sparkTools = enabledSearch
         ? [
@@ -22,8 +45,8 @@ export const params = {
                 enable: true,
                 search_mode: process.env.SPARK_SEARCH_MODE || 'normal', // normal or deep
                 /*
-            show_ref_label: true,
-            */
+              show_ref_label: true,
+              */
               },
             },
           ]
@@ -31,6 +54,8 @@ export const params = {
 
       return {
         ...rest,
+        model: requestModel,
+        thinking: { type: thinking?.type },
         tools: sparkTools,
       } as any;
     },

@@ -1,18 +1,31 @@
-import createClient, { ModelClient } from '@azure-rest/ai-inference';
-import { AzureKeyCredential } from '@azure/core-auth';
-import { ModelProvider } from 'model-bank';
-import OpenAI from 'openai';
+import type { Readable as NodeReadable } from 'node:stream';
 
-import { systemToUserModels } from '../../const/models';
-import { LobeRuntimeAI } from '../../core/BaseAI';
-import { transformResponseToStream } from '../../core/openaiCompatibleFactory';
-import { OpenAIStream, createSSEDataExtractor } from '../../core/streams';
-import { ChatMethodOptions, ChatStreamPayload } from '../../types';
+import { AzureKeyCredential } from '@azure/core-auth';
+import type { ModelClient } from '@azure-rest/ai-inference';
+import createClient from '@azure-rest/ai-inference';
+import { ModelProvider } from 'model-bank';
+import type OpenAI from 'openai';
+
+import type { LobeRuntimeAI } from '../../core/BaseAI';
+import { transformResponseToStream } from '../../core/openaiCompatible';
+import { OpenAIStream } from '../../core/protocols/openaiChatCompletions/stream';
+import {
+  appendProviderResponseEvent,
+  appendRawProviderEvent,
+  finalizeProviderResponse,
+  initializeProviderDiagnostics,
+  observeProviderReadableStream,
+  recordProviderError,
+} from '../../core/providerDiagnostics';
+import { createSSEDataExtractor } from '../../core/streams';
+import type { ChatMethodOptions, ChatStreamPayload } from '../../types';
 import { AgentRuntimeErrorType } from '../../types/error';
 import { AgentRuntimeError } from '../../utils/createError';
 import { debugStream } from '../../utils/debugStream';
 import { StreamingResponse } from '../../utils/response';
 import { sanitizeError } from '../../utils/sanitizeError';
+import { systemToUserModels } from '../openai/modelId';
+import { createAzureAIStreamChunkRecorder } from './providerDiagnostics';
 
 interface AzureAIParams {
   apiKey?: string;
@@ -35,7 +48,17 @@ export class LobeAzureAI implements LobeRuntimeAI {
   baseURL: string;
 
   async chat(payload: ChatStreamPayload, options?: ChatMethodOptions) {
-    const { messages, model, temperature, top_p, ...params } = payload;
+    // Remove internal apiMode parameter to prevent sending to Azure AI API
+
+    const {
+      messages,
+      model,
+      temperature,
+      top_p,
+      apiMode: _,
+      preserveThinking: _pt,
+      ...params
+    } = payload;
     // o1 series models on Azure OpenAI does not support streaming currently
     const enableStreaming = model.includes('o1') ? false : (params.stream ?? true);
 
@@ -49,26 +72,73 @@ export class LobeAzureAI implements LobeRuntimeAI {
             : 'developer'
           : message.role,
     }));
+    const requestBody = {
+      messages: updatedMessages as OpenAI.ChatCompletionMessageParam[],
+      model,
+      ...params,
+      stream: enableStreaming,
+      temperature: model.includes('o3') || model.includes('o4') ? undefined : temperature,
+      tool_choice: params.tools ? 'auto' : undefined,
+      top_p: model.includes('o3') || model.includes('o4') ? undefined : top_p,
+    };
+    const providerResponseDiagnostics = initializeProviderDiagnostics({
+      apiMode: 'azure_ai_chat_completions',
+      diagnostics: options?.diagnostics,
+      endpoint: this.maskSensitiveUrl(this.baseURL),
+      payload: requestBody,
+      sentAt: Date.now(),
+    });
 
     try {
       const response = this.client.path('/chat/completions').post({
-        body: {
-          messages: updatedMessages as OpenAI.ChatCompletionMessageParam[],
-          model,
-          ...params,
-          stream: enableStreaming,
-          temperature: model.includes('o3') || model.includes('o4') ? undefined : temperature,
-          tool_choice: params.tools ? 'auto' : undefined,
-          top_p: model.includes('o3') || model.includes('o4') ? undefined : top_p,
-        },
+        body: requestBody,
       });
 
       if (enableStreaming) {
-        const stream = await response.asBrowserStream();
+        const unifiedStream = await (async () => {
+          if (typeof window === 'undefined') {
+            /**
+             * In Node.js the SDK exposes a Node readable stream, so we convert it to a Web ReadableStream
+             * to reuse the same streaming pipeline used by Edge/browser runtimes.
+             */
+            const streamModule = await import('node:stream');
+            const Readable = streamModule.Readable ?? streamModule.default.Readable;
 
-        const [prod, debug] = stream.body!.tee();
+            if (!Readable) throw new Error('node:stream module missing Readable export');
+            if (typeof Readable.toWeb !== 'function')
+              throw new Error('Readable.toWeb is not a function');
+
+            const nodeResponse = await response.asNodeStream();
+            const nodeStream = nodeResponse.body;
+
+            if (!nodeStream) {
+              throw new Error('Azure AI response body is empty');
+            }
+
+            return Readable.toWeb(nodeStream as unknown as NodeReadable) as ReadableStream;
+          }
+
+          const browserResponse = await response.asBrowserStream();
+          const browserStream = browserResponse.body;
+
+          if (!browserStream) {
+            throw new Error('Azure AI response body is empty');
+          }
+
+          return browserStream;
+        })();
+
+        const observedStream = observeProviderReadableStream(
+          unifiedStream,
+          providerResponseDiagnostics,
+          createAzureAIStreamChunkRecorder(),
+          options?.signal,
+        );
+        let prod = observedStream;
 
         if (process.env.DEBUG_AZURE_AI_CHAT_COMPLETION === '1') {
+          const [productionStream, debug] = observedStream.tee();
+          prod = productionStream;
           debugStream(debug).catch(console.error);
         }
 
@@ -82,6 +152,16 @@ export class LobeAzureAI implements LobeRuntimeAI {
         );
       } else {
         const res = await response;
+        if (providerResponseDiagnostics) {
+          appendRawProviderEvent(providerResponseDiagnostics, res.body);
+          providerResponseDiagnostics.firstEventAt ??= Date.now();
+          providerResponseDiagnostics.responseReceivedAt ??= Date.now();
+          providerResponseDiagnostics.terminalEventReceived = true;
+          appendProviderResponseEvent(providerResponseDiagnostics, {
+            type: 'azure_ai_chat_completion',
+          });
+          await finalizeProviderResponse(providerResponseDiagnostics, options?.signal);
+        }
 
         // the azure AI inference response is openai compatible
         const stream = transformResponseToStream(res.body as OpenAI.ChatCompletion);
@@ -93,6 +173,8 @@ export class LobeAzureAI implements LobeRuntimeAI {
         );
       }
     } catch (e) {
+      recordProviderError(providerResponseDiagnostics, e);
+      await finalizeProviderResponse(providerResponseDiagnostics, options?.signal);
       let error = e as { [key: string]: any; code: string; message: string };
 
       if (error.code) {
@@ -126,12 +208,12 @@ export class LobeAzureAI implements LobeRuntimeAI {
   }
 
   private maskSensitiveUrl = (url: string) => {
-    // 使用正则表达式匹配 'https://' 后面和 '.azure.com/' 前面的内容
+    // Use a regex to match the content between 'https://' and '.azure.com/'
     const regex = /^(https:\/\/)([^.]+)(\.cognitiveservices\.azure\.com\/.*)$/;
 
-    // 使用替换函数
+    // Use a replacement function
     return url.replace(regex, (match, protocol, subdomain, rest) => {
-      // 将子域名替换为 '***'
+      // Replace the subdomain with '***'
       return `${protocol}***${rest}`;
     });
   };

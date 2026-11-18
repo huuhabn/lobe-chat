@@ -1,12 +1,14 @@
-import { AIChatModelCard } from '../types/aiModel';
+import type { AIChatModelCard } from '../types/aiModel';
 
 const zerooneChatModels: AIChatModelCard[] = [
   {
     contextWindowTokens: 16_384,
-    description: '最新高性能模型，保证高质量输出同时，推理速度大幅提升。',
+    description: 'A latest high-performance model with faster inference and high-quality output.',
     displayName: 'Yi Lightning',
     enabled: true,
+    family: 'yi',
     id: 'yi-lightning',
+    knowledgeCutoff: '2024',
     pricing: {
       currency: 'CNY',
       units: [
@@ -21,9 +23,11 @@ const zerooneChatModels: AIChatModelCard[] = [
       vision: true,
     },
     contextWindowTokens: 16_384,
-    description: '复杂视觉任务模型，提供基于多张图片的高性能理解、分析能力。',
+    description:
+      'A vision model for complex tasks with strong multi-image understanding and analysis.',
     displayName: 'Yi Vision V2',
     enabled: true,
+    family: 'yi',
     id: 'yi-vision-v2',
     pricing: {
       currency: 'CNY',
@@ -36,8 +40,9 @@ const zerooneChatModels: AIChatModelCard[] = [
   },
   {
     contextWindowTokens: 16_384,
-    description: '小而精悍，轻量极速模型。提供强化数学运算和代码编写能力。',
+    description: 'A compact, fast model with strengthened math and coding capabilities.',
     displayName: 'Yi Spark',
+    family: 'yi',
     id: 'yi-spark',
     pricing: {
       currency: 'CNY',
@@ -50,8 +55,10 @@ const zerooneChatModels: AIChatModelCard[] = [
   },
   {
     contextWindowTokens: 16_384,
-    description: '中型尺寸模型升级微调，能力均衡，性价比高。深度优化指令遵循能力。',
+    description:
+      'A tuned mid-size model with balanced capability and value, optimized for instruction following.',
     displayName: 'Yi Medium',
+    family: 'yi',
     id: 'yi-medium',
     pricing: {
       currency: 'CNY',
@@ -64,8 +71,9 @@ const zerooneChatModels: AIChatModelCard[] = [
   },
   {
     contextWindowTokens: 200_000,
-    description: '200K 超长上下文窗口，提供长文本深度理解和生成能力。',
+    description: 'A 200K long-context model for deep long-form understanding and generation.',
     displayName: 'Yi Medium 200K',
+    family: 'yi',
     id: 'yi-medium-200k',
     pricing: {
       currency: 'CNY',
@@ -78,8 +86,10 @@ const zerooneChatModels: AIChatModelCard[] = [
   },
   {
     contextWindowTokens: 16_384,
-    description: '超高性价比、卓越性能。根据性能和推理速度、成本，进行平衡性高精度调优。',
+    description:
+      'Exceptional value and performance, tuned for a strong balance of quality, speed, and cost.',
     displayName: 'Yi Large Turbo',
+    family: 'yi',
     id: 'yi-large-turbo',
     pricing: {
       currency: 'CNY',
@@ -93,8 +103,9 @@ const zerooneChatModels: AIChatModelCard[] = [
   {
     contextWindowTokens: 16_384,
     description:
-      '基于 yi-large 超强模型的高阶服务，结合检索与生成技术提供精准答案，实时全网检索信息服务。',
+      'An advanced service based on yi-large, combining retrieval and generation for precise answers with real-time web search.',
     displayName: 'Yi Large RAG',
+    family: 'yi',
     id: 'yi-large-rag',
     pricing: {
       currency: 'CNY',
@@ -111,8 +122,9 @@ const zerooneChatModels: AIChatModelCard[] = [
     },
     contextWindowTokens: 32_768,
     description:
-      '在 yi-large 模型的基础上支持并强化了工具调用的能力，适用于各种需要搭建 agent 或 workflow 的业务场景。',
+      'Built on yi-large with enhanced tool-calling, suited for agent and workflow scenarios.',
     displayName: 'Yi Large FC',
+    family: 'yi',
     id: 'yi-large-fc',
     pricing: {
       currency: 'CNY',
@@ -125,8 +137,9 @@ const zerooneChatModels: AIChatModelCard[] = [
   },
   {
     contextWindowTokens: 32_768,
-    description: '全新千亿参数模型，提供超强问答及文本生成能力。',
+    description: 'A new 100B-parameter model with strong Q&A and text generation.',
     displayName: 'Yi Large',
+    family: 'yi',
     id: 'yi-large',
     pricing: {
       currency: 'CNY',
@@ -142,8 +155,9 @@ const zerooneChatModels: AIChatModelCard[] = [
       vision: true,
     },
     contextWindowTokens: 16_384,
-    description: '复杂视觉任务模型，提供高性能图片理解、分析能力。',
+    description: 'A vision model for complex tasks with strong image understanding and analysis.',
     displayName: 'Yi Vision',
+    family: 'yi',
     id: 'yi-vision',
     pricing: {
       currency: 'CNY',
@@ -156,8 +170,9 @@ const zerooneChatModels: AIChatModelCard[] = [
   },
   {
     contextWindowTokens: 16_384,
-    description: '初期版本，推荐使用 yi-large（新版本）。',
+    description: 'An early version; yi-large (newer) is recommended.',
     displayName: 'Yi Large Preview',
+    family: 'yi',
     id: 'yi-large-preview',
     pricing: {
       currency: 'CNY',
@@ -170,8 +185,9 @@ const zerooneChatModels: AIChatModelCard[] = [
   },
   {
     contextWindowTokens: 16_384,
-    description: '轻量化版本，推荐使用 yi-lightning。',
+    description: 'A lightweight version; yi-lightning is recommended.',
     displayName: 'Yi Lightning Lite',
+    family: 'yi',
     id: 'yi-lightning-lite',
     pricing: {
       currency: 'CNY',

@@ -1,6 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { isArc, isSonomaOrLaterSafari } from './platform';
+import { isArc, isMacOSWithLargeWindowBorders, isSonomaOrLaterSafari } from './platform';
+
+vi.mock('./platform', async (importOriginal) => {
+  const mod = await importOriginal();
+
+  return {
+    // @ts-ignore
+    ...mod,
+    isOnServerSide: true,
+  };
+});
 
 describe('isSonomaOrLaterSafari', () => {
   beforeEach(() => {
@@ -9,6 +19,31 @@ describe('isSonomaOrLaterSafari', () => {
       userAgent:
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.4 Safari/605.1.15',
       maxTouchPoints: 0,
+    });
+  });
+
+  describe('isMacOSWithLargeWindowBorders', () => {
+    it('should return true for macOS 10.15+', () => {
+      vi.stubGlobal('navigator', {
+        userAgent:
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
+      });
+
+      expect(isMacOSWithLargeWindowBorders()).toBe(true);
+    });
+
+    it('should return false for non-macOS userAgent', () => {
+      vi.stubGlobal('navigator', { userAgent: 'Windows NT 10.0; Win64; x64' });
+      expect(isMacOSWithLargeWindowBorders()).toBe(false);
+    });
+
+    it('should return false in Electron', () => {
+      vi.stubGlobal('navigator', {
+        userAgent:
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Electron/30.0.0 Safari/537.36',
+      });
+
+      expect(isMacOSWithLargeWindowBorders()).toBe(false);
     });
   });
 
@@ -98,15 +133,6 @@ describe('isSonomaOrLaterSafari', () => {
     });
 
     it('should return false when on server side', () => {
-      vi.mock('./platform', async (importOriginal) => {
-        const mod = await importOriginal();
-
-        return {
-          // @ts-ignore
-          ...mod,
-          isOnServerSide: true,
-        };
-      });
       expect(isArc()).toBe(false);
     });
 

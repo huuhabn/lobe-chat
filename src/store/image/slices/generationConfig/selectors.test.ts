@@ -1,11 +1,12 @@
-import { ModelParamsSchema, RuntimeImageGenParams, gptImage1ParamsSchema } from 'model-bank';
-import { AIImageModelCard } from 'model-bank';
+import type { AIImageModelCard, ModelParamsSchema, RuntimeImageGenParams } from 'model-bank';
+import { gptImage1Schema } from 'model-bank';
 import { describe, expect, it, vi } from 'vitest';
 
-import { ImageStore } from '@/store/image';
+import { type ImageStore } from '@/store/image';
 import { initialState } from '@/store/image/initialState';
 import { merge } from '@/utils/merge';
 
+import { DEFAULT_AI_IMAGE_MODEL, DEFAULT_AI_IMAGE_PROVIDER } from './initialState';
 import { imageGenerationConfigSelectors } from './selectors';
 
 // Mock external dependencies
@@ -20,7 +21,7 @@ vi.mock('@/store/aiInfra', () => ({
             id: 'gpt-image-1',
             displayName: 'GPT Image 1',
             type: 'image',
-            parameters: gptImage1ParamsSchema,
+            parameters: gptImage1Schema,
             releasedAt: '2024-12-01',
           } as AIImageModelCard,
         ],
@@ -57,7 +58,7 @@ describe('imageGenerationConfigSelectors', () => {
 
     it('should return the default model from initial state', () => {
       const result = imageGenerationConfigSelectors.model(initialStore);
-      expect(result).toBe('gpt-image-1'); // Default model from initialState
+      expect(result).toBe(DEFAULT_AI_IMAGE_MODEL);
     });
   });
 
@@ -70,7 +71,7 @@ describe('imageGenerationConfigSelectors', () => {
 
     it('should return the default provider from initial state', () => {
       const result = imageGenerationConfigSelectors.provider(initialStore);
-      expect(result).toBe('openai'); // Default provider from initialState
+      expect(result).toBe(DEFAULT_AI_IMAGE_PROVIDER);
     });
   });
 
@@ -98,7 +99,10 @@ describe('imageGenerationConfigSelectors', () => {
     it('should return the current parameters', () => {
       const state = merge(initialStore, { parameters: testParameters });
       const result = imageGenerationConfigSelectors.parameters(state);
-      expect(result).toEqual(testParameters);
+      // merge does deep merge, so result contains both default and test values
+      expect(result.prompt).toBe(testParameters.prompt);
+      expect(result.size).toBe(testParameters.size);
+      expect(result.imageUrls).toEqual(testParameters.imageUrls);
     });
 
     it('should return the default parameters from initial state', () => {
@@ -120,7 +124,10 @@ describe('imageGenerationConfigSelectors', () => {
     it('should return the current parametersSchema', () => {
       const state = merge(initialStore, { parametersSchema: testModelSchema });
       const result = imageGenerationConfigSelectors.parametersSchema(state);
-      expect(result).toEqual(testModelSchema);
+      // merge does deep merge, so result contains both default and test values
+      expect(result.prompt).toEqual(testModelSchema.prompt);
+      expect(result.size).toEqual(testModelSchema.size);
+      expect(result.imageUrls).toEqual(testModelSchema.imageUrls);
     });
 
     it('should return default parametersSchema when not explicitly overridden', () => {
@@ -149,12 +156,6 @@ describe('imageGenerationConfigSelectors', () => {
   });
 
   describe('isSupportParam', () => {
-    it('should return true when parameter exists in parametersSchema', () => {
-      const state = merge(initialStore, { parametersSchema: testModelSchema });
-      const result = imageGenerationConfigSelectors.isSupportedParam('size')(state);
-      expect(result).toBe(true);
-    });
-
     it('should return false when parameter does not exist in parametersSchema', () => {
       const state = merge(initialStore, { parametersSchema: testModelSchema });
       const result = imageGenerationConfigSelectors.isSupportedParam('nonexistent' as any)(state);
@@ -187,7 +188,7 @@ describe('imageGenerationConfigSelectors', () => {
     });
 
     it('should work correctly with gpt-image-1 parameters', () => {
-      const state = merge(initialStore, { parametersSchema: gptImage1ParamsSchema });
+      const state = merge(initialStore, { parametersSchema: gptImage1Schema });
 
       // Test some known gpt-image-1 parameters
       expect(imageGenerationConfigSelectors.isSupportedParam('prompt')(state)).toBe(true);
@@ -198,6 +199,33 @@ describe('imageGenerationConfigSelectors', () => {
       expect(imageGenerationConfigSelectors.isSupportedParam('nonexistent' as any)(state)).toBe(
         false,
       );
+    });
+  });
+
+  describe('isAnimatedOutput', () => {
+    const gifSchema: ModelParamsSchema = {
+      outputFormat: { default: 'png', enum: ['png', 'gif'] },
+      prompt: { default: '' },
+    };
+
+    it('is true only when the model declares outputFormat and GIF is selected', () => {
+      const gif = merge(initialStore, {
+        parameters: { outputFormat: 'gif', prompt: '' },
+        parametersSchema: gifSchema,
+      });
+      const png = merge(initialStore, {
+        parameters: { outputFormat: 'png', prompt: '' },
+        parametersSchema: gifSchema,
+      });
+
+      expect(imageGenerationConfigSelectors.isAnimatedOutput(gif)).toBe(true);
+      expect(imageGenerationConfigSelectors.isAnimatedOutput(png)).toBe(false);
+    });
+
+    it('ignores a stale GIF value on a model without outputFormat', () => {
+      const state = merge(initialStore, { parameters: { outputFormat: 'gif', prompt: '' } });
+
+      expect(imageGenerationConfigSelectors.isAnimatedOutput(state)).toBe(false);
     });
   });
 });

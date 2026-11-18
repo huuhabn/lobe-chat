@@ -1,9 +1,13 @@
-import { GenerateContentConfig, GoogleGenAI, Type as SchemaType } from '@google/genai';
+import type { GenerateContentConfig, GoogleGenAI } from '@google/genai';
+import { FunctionCallingConfigMode, Type as SchemaType } from '@google/genai';
 import Debug from 'debug';
+import type { Pricing } from 'model-bank';
 
-import { GenerateObjectOptions } from '../../types';
+import { buildGoogleTool } from '../../core/contextBuilders/google';
+import { convertGoogleAIUsage } from '../../core/usageConverters/google-ai';
+import type { ChatCompletionTool, GenerateObjectOptions, GenerateObjectSchema } from '../../types';
 
-const debug = Debug('mode-runtime:google:generateObject');
+const debug = Debug('lobe-mode-runtime:google:generateObject');
 
 enum HarmCategory {
   HARM_CATEGORY_DANGEROUS_CONTENT = 'HARM_CATEGORY_DANGEROUS_CONTENT',
@@ -54,19 +58,47 @@ const convertType = (type: string): SchemaType => {
 /**
  * Convert OpenAI JSON schema to Google Gemini schema format
  */
-export const convertOpenAISchemaToGoogleSchema = (openAISchema: any): any => {
+export const convertOpenAISchemaToGoogleSchema = (openAISchema: GenerateObjectSchema): any => {
+  // Check whether a schema type is (or includes) STRING / OBJECT.
+  // Handles both `type: 'string'` and nullable `type: ['string', 'null']`.
+  const isStringType = (t: unknown): boolean =>
+    typeof t === 'string' ? t === 'string' : Array.isArray(t) && t.includes('string');
+  const isObjectType = (t: unknown): boolean =>
+    typeof t === 'string' ? t === 'object' : Array.isArray(t) && t.includes('object');
+
   const convertSchema = (schema: any): any => {
     if (!schema) return schema;
 
+    // Gemini has no `null` type: a nullable union (`anyOf: [X, { type: 'null' }]` or
+    // `type: [X, 'null']`) becomes X with `nullable: true`. Otherwise `anyOf` was dropped and
+    // the node fell back to STRING, so Gemini returned numbers as strings.
+    const { anyOf, ...rest } = schema;
+    const nonNullBranches = anyOf?.filter((branch: any) => branch?.type !== 'null');
+    if (nonNullBranches?.length === 1 && nonNullBranches.length < anyOf.length) {
+      return { ...convertSchema({ ...rest, ...nonNullBranches[0] }), nullable: true };
+    }
+    const nonNullTypes = Array.isArray(schema.type)
+      ? schema.type.filter((type: string) => type !== 'null')
+      : undefined;
+    if (nonNullTypes?.length === 1 && nonNullTypes.length < schema.type.length) {
+      return { ...convertSchema({ ...schema, type: nonNullTypes[0] }), nullable: true };
+    }
+
+    // convertType handles single string types; for array types (nullable)
+    // default to STRING which is safe for Gemini Schema proto.
+    const typeArg: string = Array.isArray(schema.type) ? 'string' : schema.type;
     const converted: any = {
-      type: convertType(schema.type),
+      type: convertType(typeArg),
     };
 
     if (schema.description) {
       converted.description = schema.description;
     }
 
-    if (schema.enum) {
+    // Only include enum if type is STRING and enum is non-empty.
+    // Gemini proto: enum is only allowed for STRING type.
+    // @see https://linear.app/lobehub/issue/
+    if (schema.enum && schema.enum.length > 0 && isStringType(schema.type)) {
       converted.enum = schema.enum;
     }
 
@@ -81,7 +113,10 @@ export const convertOpenAISchemaToGoogleSchema = (openAISchema: any): any => {
       converted.items = convertSchema(schema.items);
     }
 
-    if (schema.required) {
+    // Only include required if type is OBJECT and required is non-empty.
+    // Gemini proto: required is only allowed for OBJECT type.
+    // @see https://linear.app/lobehub/issue/
+    if (schema.required && schema.required.length > 0 && isObjectType(schema.type)) {
       converted.required = schema.required;
     }
 
@@ -92,7 +127,7 @@ export const convertOpenAISchemaToGoogleSchema = (openAISchema: any): any => {
     return converted;
   };
 
-  return convertSchema(openAISchema);
+  return convertSchema(openAISchema.schema);
 };
 
 /**
@@ -104,9 +139,10 @@ export const createGoogleGenerateObject = async (
   payload: {
     contents: any[];
     model: string;
-    schema: any;
+    schema: GenerateObjectSchema;
   },
   options?: GenerateObjectOptions,
+  pricing?: Pricing,
 ) => {
   const { schema, contents, model } = payload;
 
@@ -163,6 +199,10 @@ export const createGoogleGenerateObject = async (
 
   debug('API response received', { hasText: !!response.text, textLength: response.text?.length });
 
+  if (response.usageMetadata) {
+    await options?.onUsage?.(convertGoogleAIUsage(response.usageMetadata, pricing));
+  }
+
   const text = response.text;
 
   try {
@@ -174,4 +214,101 @@ export const createGoogleGenerateObject = async (
 
     return undefined;
   }
+};
+
+/**
+ * Generate structured output using Google Gemini API with tools calling
+ * @see https://ai.google.dev/gemini-api/docs/function-calling
+ */
+export const createGoogleGenerateObjectWithTools = async (
+  client: GoogleGenAI,
+  payload: {
+    contents: any[];
+    model: string;
+    tools: ChatCompletionTool[];
+  },
+  options?: GenerateObjectOptions,
+  pricing?: Pricing,
+) => {
+  const { tools, contents, model } = payload;
+
+  debug('createGoogleGenerateObjectWithTools started', {
+    contentsLength: contents.length,
+    model,
+    toolsCount: tools.length,
+  });
+
+  // Convert tools to Google FunctionDeclaration format
+  const functionDeclarations = tools.map(buildGoogleTool);
+  debug('Tools conversion completed', { functionDeclarations });
+
+  const config: GenerateContentConfig = {
+    abortSignal: options?.signal,
+    // avoid wide sensitive words
+    safetySettings: [
+      {
+        category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        threshold: getThreshold(model),
+      },
+      {
+        category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        threshold: getThreshold(model),
+      },
+      {
+        category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+        threshold: getThreshold(model),
+      },
+      {
+        category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+        threshold: getThreshold(model),
+      },
+    ],
+    // Force tool calling with 'any' mode
+    toolConfig: {
+      functionCallingConfig: {
+        mode: FunctionCallingConfigMode.ANY,
+      },
+    },
+    tools: [{ functionDeclarations }],
+  };
+
+  debug('Config prepared', {
+    hasAbortSignal: !!config.abortSignal,
+    hasSafetySettings: !!config.safetySettings,
+    hasTools: !!config.tools,
+    model,
+  });
+
+  const response = await client.models.generateContent({
+    config,
+    contents,
+    model,
+  });
+
+  debug('API response received', {
+    candidatesCount: response.candidates?.length,
+    hasContent: !!response.candidates?.[0]?.content,
+  });
+
+  if (response.usageMetadata) {
+    await options?.onUsage?.(convertGoogleAIUsage(response.usageMetadata, pricing));
+  }
+
+  // Extract function calls from response
+  const candidate = response.candidates?.[0];
+  if (!candidate?.content?.parts) {
+    debug('no content parts in response');
+    return undefined;
+  }
+
+  const functionCalls = candidate.content.parts
+    .filter((part) => part.functionCall)
+    .map((part) => ({
+      arguments: part.functionCall!.args,
+      name: part.functionCall!.name,
+    }));
+
+  debug('extracted function calls', { count: functionCalls.length, functionCalls });
+
+  return functionCalls.length > 0 ? functionCalls : undefined;
 };

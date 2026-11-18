@@ -1,19 +1,14 @@
-import { HfInference } from '@huggingface/inference';
-import type { ChatModelCard } from '@lobechat/types';
+import { InferenceClient } from '@huggingface/inference';
 import { ModelProvider } from 'model-bank';
 import urlJoin from 'url-join';
 
-import {
-  OpenAICompatibleFactoryOptions,
-  createOpenAICompatibleRuntime,
-} from '../../core/openaiCompatibleFactory';
+import { convertOpenAIMessagesToHFFormat } from '../../core/contextBuilders/huggingface';
+import type { OpenAICompatibleFactoryOptions } from '../../core/openaiCompatible';
+import { createOpenAICompatibleRuntime } from '../../core/openaiCompatible';
 import { convertIterableToStream } from '../../core/streams';
 import { AgentRuntimeErrorType } from '../../types/error';
-
-export interface HuggingFaceModelCard {
-  id: string;
-  tags: string[];
-}
+import { processMultiProviderModelList } from '../../utils/modelParse';
+import type { HuggingFaceRouterResponse } from './type';
 
 export const params = {
   chatCompletion: {
@@ -30,12 +25,11 @@ export const params = {
     },
   },
   customClient: {
-    createChatCompletionStream: (client: HfInference, payload, instance) => {
-      const { max_tokens = 4096 } = payload;
+    createChatCompletionStream: (client: InferenceClient, payload, instance) => {
       const hfRes = client.chatCompletionStream({
         endpointUrl: instance.baseURL ? urlJoin(instance.baseURL, payload.model) : instance.baseURL,
-        max_tokens: max_tokens,
-        messages: payload.messages,
+        max_tokens: payload.max_tokens,
+        messages: convertOpenAIMessagesToHFFormat(payload.messages),
         model: payload.model,
         stream: true,
         temperature: payload.temperature,
@@ -51,56 +45,85 @@ export const params = {
 
       return convertIterableToStream(hfRes);
     },
-    createClient: (options) => new HfInference(options.apiKey),
+    createClient: (options) =>
+      new InferenceClient(options.apiKey ?? '', {
+        endpointUrl: options.baseURL ?? undefined,
+      }),
   },
   debug: {
     chatCompletion: () => process.env.DEBUG_HUGGINGFACE_CHAT_COMPLETION === '1',
   },
   models: async () => {
-    const { LOBE_DEFAULT_MODEL_LIST } = await import('model-bank');
+    const response = await fetch('https://router.huggingface.co/v1/models');
+    if (!response.ok) {
+      throw new Error(`HuggingFace models API request failed with status ${response.status}`);
+    }
 
-    const visionKeywords = ['image-text-to-text', 'multimodal', 'vision'];
+    const data: HuggingFaceRouterResponse = await response.json();
+    const modelList = data.data;
 
-    const reasoningKeywords = ['deepseek-r1', 'qvq', 'qwq'];
-
-    // ref: https://huggingface.co/api/models
-    const url = 'https://huggingface.co/api/models';
-    const response = await fetch(url, {
-      method: 'GET',
-    });
-    const json = await response.json();
-
-    const modelList: HuggingFaceModelCard[] = json;
-
-    return modelList
+    const formattedModels = modelList
       .map((model) => {
-        const knownModel = LOBE_DEFAULT_MODEL_LIST.find(
-          (m) => model.id.toLowerCase() === m.id.toLowerCase(),
-        );
+        const { architecture, providers } = model;
+
+        // Provider info selection priority: is_model_author > field completeness > first by default
+        const mainProvider =
+          providers.find((p) => p.is_model_author) ||
+          providers.reduce((prev, curr) => {
+            // Count the number of non-undefined fields for each provider
+            const prevFieldCount = Object.values(prev).filter(
+              (v) => v !== undefined && v !== null,
+            ).length;
+            const currFieldCount = Object.values(curr).filter(
+              (v) => v !== undefined && v !== null,
+            ).length;
+            return currFieldCount > prevFieldCount ? curr : prev;
+          }) ||
+          providers[0];
+
+        if (!mainProvider) {
+          return undefined;
+        }
+
+        // Multi-provider fallback strategy: get from main provider first, fall back to others if missing
+        const getFieldFromProviders = (field: keyof typeof mainProvider) => {
+          const value = mainProvider[field];
+          if (value !== undefined && value !== null) {
+            return value;
+          }
+          // Traverse other providers when the field is missing
+          return providers.find(
+            (p) => p !== mainProvider && p[field] !== undefined && p[field] !== null,
+          )?.[field];
+        };
+
+        const inputModalities = architecture?.input_modalities || [];
+        const contextWindowTokens = getFieldFromProviders('context_length') as number | undefined;
+        const supportsTools = getFieldFromProviders('supports_tools') as boolean | undefined;
+        // const supportsStructuredOutput = getFieldFromProviders('supports_structured_output') as boolean | undefined;
+
+        // displayName strips everything to the left of the slash from the id (e.g. 'zai-org/GLM-4.6' -> 'GLM-4.6')
+        const displayName =
+          typeof model.id === 'string' && model.id.includes('/')
+            ? model.id.split('/').slice(1).join('/').trim()
+            : model.id;
+
+        const pricing = getFieldFromProviders('pricing') as
+          { input?: number; output?: number } | undefined;
 
         return {
-          contextWindowTokens: knownModel?.contextWindowTokens ?? undefined,
-          displayName: knownModel?.displayName ?? undefined,
-          enabled: knownModel?.enabled || false,
-          functionCall:
-            model.tags.some((tag) => tag.toLowerCase().includes('function-calling')) ||
-            knownModel?.abilities?.functionCall ||
-            false,
+          contextWindowTokens,
+          created: model.created,
+          displayName,
+          functionCall: supportsTools ?? false,
           id: model.id,
-          reasoning:
-            model.tags.some((tag) => tag.toLowerCase().includes('reasoning')) ||
-            reasoningKeywords.some((keyword) => model.id.toLowerCase().includes(keyword)) ||
-            knownModel?.abilities?.reasoning ||
-            false,
-          vision:
-            model.tags.some((tag) =>
-              visionKeywords.some((keyword) => tag.toLowerCase().includes(keyword)),
-            ) ||
-            knownModel?.abilities?.vision ||
-            false,
+          pricing,
+          vision: inputModalities.includes('image') ?? false,
         };
       })
-      .filter(Boolean) as ChatModelCard[];
+      .filter((m): m is Exclude<typeof m, undefined> => m !== undefined);
+
+    return await processMultiProviderModelList(formattedModels, 'huggingface');
   },
   provider: ModelProvider.HuggingFace,
 } satisfies OpenAICompatibleFactoryOptions;

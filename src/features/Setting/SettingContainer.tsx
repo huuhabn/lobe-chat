@@ -1,8 +1,9 @@
 'use client';
 
-import { useTheme } from 'antd-style';
-import { PropsWithChildren, ReactNode, memo } from 'react';
-import { Flexbox, FlexboxProps } from 'react-layout-kit';
+import { type FlexboxProps } from '@lobehub/ui';
+import { cssVar, Flexbox, useTheme } from '@lobehub/ui';
+import { type PropsWithChildren, type ReactNode } from 'react';
+import { memo } from 'react';
 
 interface SettingContainerProps extends FlexboxProps {
   addonAfter?: ReactNode;
@@ -12,30 +13,29 @@ interface SettingContainerProps extends FlexboxProps {
 }
 const SettingContainer = memo<PropsWithChildren<SettingContainerProps>>(
   ({ variant, maxWidth = 1024, children, addonAfter, addonBefore, style, ...rest }) => {
-    const theme = useTheme();
-
+    const theme = useTheme(); // Keep for colorBgContainerSecondary (not in cssVar)
     return (
       <Flexbox
         align={'center'}
         height={'100%'}
+        width={'100%'}
         style={{
           background:
-            variant === 'secondary' ? theme.colorBgContainerSecondary : theme.colorBgContainer,
+            variant === 'secondary' ? theme.colorBgContainerSecondary : cssVar.colorBgContainer,
           overflowX: 'hidden',
           overflowY: 'auto',
           ...style,
         }}
-        width={'100%'}
         {...rest}
       >
         {addonBefore}
         <Flexbox
           flex={1}
-          gap={64}
+          gap={36}
+          width={'100%'}
           style={{
             maxWidth,
           }}
-          width={'100%'}
         >
           {children}
         </Flexbox>

@@ -1,12 +1,23 @@
-import { MainBroadcastEventKey, MainBroadcastParams } from '@lobechat/electron-client-ipc';
-import { WebContents } from 'electron';
+import type {
+  MainBroadcastEventKey,
+  MainBroadcastParams,
+  TopicPopupInfo,
+  WindowSizeParams,
+} from '@lobechat/electron-client-ipc';
+import type { WebContents } from 'electron';
 
+import { isLinux } from '@/const/env';
+import RemoteServerConfigCtr from '@/controllers/RemoteServerConfigCtr';
 import { createLogger } from '@/utils/logger';
 
-import { AppBrowsersIdentifiers, appBrowsers, WindowTemplate, WindowTemplateIdentifiers, windowTemplates } from '../../appBrowsers';
+import type { AppBrowsersIdentifiers, WindowTemplateIdentifiers } from '../../appBrowsers';
+import { appBrowsers, BrowsersIdentifiers, windowTemplates } from '../../appBrowsers';
 import type { App } from '../App';
 import type { BrowserWindowOpts } from './Browser';
 import Browser from './Browser';
+
+const TOPIC_POPUP_TEMPLATE_ID: WindowTemplateIdentifiers = 'topicPopup';
+const TOPIC_POPUP_PATH_RE = /^\/popup\/(agent|group)\/([^/?#]+)\/([^/?#]+)/;
 
 // Create logger
 const logger = createLogger('core:BrowserManager');
@@ -24,20 +35,25 @@ export class BrowserManager {
   }
 
   getMainWindow() {
-    return this.retrieveByIdentifier('chat');
+    return this.retrieveByIdentifier(BrowsersIdentifiers.app);
   }
 
   showMainWindow() {
+    if (this.app.startupUpdatePending) return;
     logger.debug('Showing main window');
-    const window = this.getMainWindow();
-    window.show();
+    const browser = this.getMainWindow();
+    const window = browser.browserWindow;
+
+    if (window.isMinimized()) {
+      window.restore();
+    }
+
+    browser.show();
+    window.focus();
   }
 
-  showSettingsWindow() {
-    logger.debug('Showing settings window');
-    const window = this.retrieveByIdentifier('settings');
-    window.show();
-    return window;
+  waitForMainWindowFirstFrame(timeoutMs?: number): Promise<void> {
+    return this.getMainWindow().waitForFirstFrame(timeoutMs);
   }
 
   broadcastToAllWindows = <T extends MainBroadcastEventKey>(
@@ -60,34 +76,11 @@ export class BrowserManager {
   };
 
   /**
-   * Display the settings window and navigate to a specific tab
-   * @param tab Settings window sub-path tab
-   */
-  async showSettingsWindowWithTab(tab?: string) {
-    logger.debug(`Showing settings window with tab: ${tab || 'default'}`);
-    // common is the main path for settings route
-    if (tab && tab !== 'common') {
-      const browser = await this.redirectToPage('settings', tab);
-
-      // make provider page more large
-      if (tab.startsWith('provider/')) {
-        logger.debug('Resizing window for provider settings');
-        browser.setWindowSize({ height: 1000, width: 1400 });
-        browser.moveToCenter();
-      }
-
-      return browser;
-    } else {
-      return this.showSettingsWindow();
-    }
-  }
-
-  /**
    * Navigate window to specific sub-path
    * @param identifier Window identifier
    * @param subPath Sub-path, such as 'agent', 'about', etc.
    */
-  async redirectToPage(identifier: string, subPath?: string) {
+  async redirectToPage(identifier: string, subPath?: string, search?: string) {
     try {
       // Ensure window is retrieved or created
       const browser = this.retrieveByIdentifier(identifier);
@@ -105,11 +98,14 @@ export class BrowserManager {
 
       // Build complete URL path
       const fullPath = subPath ? `${baseRoute}/${subPath}` : baseRoute;
+      const normalizedSearch =
+        search && search.length > 0 ? (search.startsWith('?') ? search : `?${search}`) : '';
+      const fullUrl = `${fullPath}${normalizedSearch}`;
 
-      logger.debug(`Redirecting to: ${fullPath}`);
+      logger.debug(`Redirecting to: ${fullUrl}`);
 
       // Load URL and show window
-      await browser.loadUrl(fullPath);
+      await browser.loadUrl(fullUrl);
       browser.show();
 
       return browser;
@@ -143,30 +139,106 @@ export class BrowserManager {
    * @param uniqueId Optional unique identifier, will be generated if not provided
    * @returns The window identifier and Browser instance
    */
-  createMultiInstanceWindow(templateId: WindowTemplateIdentifiers, path: string, uniqueId?: string) {
+  createMultiInstanceWindow(
+    templateId: WindowTemplateIdentifiers,
+    path: string,
+    uniqueId?: string,
+    windowSize?: WindowSizeParams,
+  ) {
     const template = windowTemplates[templateId];
     if (!template) {
       throw new Error(`Window template ${templateId} not found`);
     }
 
     // Generate unique identifier
-    const windowId = uniqueId || `${template.baseIdentifier}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const windowId =
+      uniqueId ||
+      `${template.baseIdentifier}_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
 
     // Create browser options from template
     const browserOpts: BrowserWindowOpts = {
       ...template,
+      ...windowSize,
       identifier: windowId,
-      path: path,
+      path,
+      restoreWindowState: windowSize === undefined,
     };
 
     logger.debug(`Creating multi-instance window: ${windowId} with path: ${path}`);
 
     const browser = this.retrieveOrInitialize(browserOpts);
 
+    if (templateId === TOPIC_POPUP_TEMPLATE_ID) {
+      // Notify main-window SPAs so they can redirect to the popup instead of
+      // rendering the same conversation in two places. Re-emit on close to
+      // release the "topic is in popup" guard.
+      this.emitTopicPopupsChanged();
+      browser.browserWindow.once('closed', () => {
+        this.emitTopicPopupsChanged();
+      });
+    }
+
     return {
+      browser,
       identifier: windowId,
-      browser: browser,
     };
+  }
+
+  /**
+   * List currently-open topic popup windows (alive only). Used by the main
+   * SPA to decide whether to render the conversation or a redirect-to-popup
+   * guard.
+   */
+  listTopicPopups(): TopicPopupInfo[] {
+    const popups: TopicPopupInfo[] = [];
+    this.browsers.forEach((browser, identifier) => {
+      if (!identifier.startsWith(`${TOPIC_POPUP_TEMPLATE_ID}_`)) return;
+      const webContents = browser.webContents;
+      if (!webContents || webContents.isDestroyed()) return;
+      const match = browser.options.path.match(TOPIC_POPUP_PATH_RE);
+      if (!match) return;
+      const scope = match[1] as 'agent' | 'group';
+      const id = match[2];
+      const topicId = match[3];
+      popups.push({
+        identifier,
+        scope,
+        topicId,
+        ...(scope === 'agent' ? { agentId: id } : { groupId: id }),
+      });
+    });
+    return popups;
+  }
+
+  focusTopicPopup(identifier: string): boolean {
+    const browser = this.browsers.get(identifier);
+    if (!browser) return false;
+    const win = browser.browserWindow;
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+    return true;
+  }
+
+  /**
+   * Open (or focus) the single-instance Quick Chat popup.
+   *
+   * The window is backed by the `topicPopup` template and the route
+   * `/popup/agent/inbox`, so it mounts a fresh Inbox conversation with no
+   * active topic. The first message creates a topic via the normal agent
+   * flow. The `uniqueId` is fixed — repeated invocations focus the existing
+   * window rather than spawning additional ones.
+   */
+  openQuickChatPopup() {
+    const uniqueId = 'topicPopup_quick_inbox';
+    const result = this.createMultiInstanceWindow('topicPopup', '/popup/agent/inbox', uniqueId);
+    result.browser.show();
+    result.browser.browserWindow.focus();
+    return result;
+  }
+
+  private emitTopicPopupsChanged(): void {
+    this.broadcastToAllWindows('topicPopupsChanged', { popups: this.listTopicPopups() });
   }
 
   /**
@@ -176,7 +248,7 @@ export class BrowserManager {
    */
   getWindowsByTemplate(templateId: string): string[] {
     const prefix = `${templateId}_`;
-    return Array.from(this.browsers.keys()).filter(id => id.startsWith(prefix));
+    return Array.from(this.browsers.keys()).filter((id) => id.startsWith(prefix));
   }
 
   /**
@@ -185,7 +257,7 @@ export class BrowserManager {
    */
   closeWindowsByTemplate(templateId: string): void {
     const windowIds = this.getWindowsByTemplate(templateId);
-    windowIds.forEach(id => {
+    windowIds.forEach((id) => {
       const browser = this.browsers.get(id);
       if (browser) {
         browser.close();
@@ -194,14 +266,75 @@ export class BrowserManager {
   }
 
   /**
+   * Consume a route captured before an update restart. The captured route is
+   * cleared before any navigation decision so a subsequent normal launch never
+   * restores a stale route.
+   */
+  private consumePendingRestoreRoute(): string {
+    const pendingRestoreRoute = this.app.storeManager.get('pendingRestoreRoute', '');
+    if (pendingRestoreRoute) this.app.storeManager.set('pendingRestoreRoute', '');
+    return pendingRestoreRoute;
+  }
+
+  private resolveMainWindowInitialPath(
+    isOnboardingCompleted: boolean,
+    pendingRestoreRoute: string,
+    lastWorkspaceSlug: string,
+  ): string {
+    if (!isOnboardingCompleted) return '/desktop-onboarding';
+    if (pendingRestoreRoute) return pendingRestoreRoute;
+    // Shape guard: a corrupted store value must not produce an unloadable path.
+    if (lastWorkspaceSlug && /^[a-z0-9-]+$/.test(lastWorkspaceSlug)) {
+      return `/${lastWorkspaceSlug}`;
+    }
+    return '/';
+  }
+
+  /**
+   * The account's remembered workspace slug, so the main window boots straight
+   * at `/{slug}` with no post-load redirect. The account comes from the stored
+   * OIDC token — no token (signed out) means no memory to apply.
+   */
+  private getLastWorkspaceSlug(remoteServerConfigCtr: RemoteServerConfigCtr): string {
+    const { userId } = remoteServerConfigCtr.getDesktopBootstrapIdentity();
+    if (!userId) return '';
+
+    return this.app.storeManager.get('lastWorkspaceSlugByAccount', {})[userId] ?? '';
+  }
+
+  /**
    * Initialize all browsers when app starts up
    */
-  initializeBrowsers() {
+  async initializeBrowsers() {
     logger.info('Initializing all browsers');
+
+    // A configured remote server only proves that Login completed. The explicit
+    // marker keeps the remaining first-run steps resumable after a relaunch.
+    const remoteServerConfigCtr = this.app.getController(RemoteServerConfigCtr);
+    const isRemoteServerConfigured = await remoteServerConfigCtr.isRemoteServerConfigured();
+    const desktopOnboardingCompleted = this.app.storeManager.get('desktopOnboardingCompleted');
+    const isOnboardingCompleted = isRemoteServerConfigured && desktopOnboardingCompleted !== false;
+
     Object.values(appBrowsers).forEach((browser: BrowserWindowOpts) => {
       logger.debug(`Initializing browser: ${browser.identifier}`);
 
-      if (browser.keepAlive) {
+      // Dynamically determine initial path for main window
+      if (browser.identifier === BrowsersIdentifiers.app) {
+        const pendingRestoreRoute = this.consumePendingRestoreRoute();
+        const initialPath = this.resolveMainWindowInitialPath(
+          isOnboardingCompleted,
+          pendingRestoreRoute,
+          this.getLastWorkspaceSlug(remoteServerConfigCtr),
+        );
+        browser = {
+          ...browser,
+          keepAlive: isLinux ? false : browser.keepAlive,
+          path: initialPath,
+        };
+        logger.debug(`Main window initial path: ${initialPath}`);
+      }
+
+      if (browser.keepAlive || browser.identifier === BrowsersIdentifiers.app) {
         this.retrieveOrInitialize(browser);
       }
     });
@@ -214,6 +347,7 @@ export class BrowserManager {
    * @param options Browser window options
    */
   private retrieveOrInitialize(options: BrowserWindowOpts) {
+    if (this.app.startupUpdatePending) throw new Error('Startup update is still pending');
     let browser = this.browsers.get(options.identifier);
     if (browser) {
       logger.debug(`Retrieved existing browser: ${options.identifier}`);
@@ -226,17 +360,26 @@ export class BrowserManager {
     const identifier = options.identifier;
     this.browsers.set(identifier, browser);
 
-    // 记录 WebContents 和 identifier 的映射
+    // Record the mapping between WebContents and identifier
     this.webContentsMap.set(browser.browserWindow.webContents, identifier);
 
-    // 当窗口关闭时清理映射
+    // Clean up the mapping when the window is closed
     browser.browserWindow.on('close', () => {
       if (browser.webContents) this.webContentsMap.delete(browser.webContents);
     });
 
     browser.browserWindow.on('show', () => {
-      if (browser.webContents)
-        this.webContentsMap.set(browser.webContents, browser.identifier);
+      if (browser.webContents) this.webContentsMap.set(browser.webContents, browser.identifier);
+    });
+
+    // Dynamic windows may use a stable identifier (for example, one window per
+    // workspace). Once such a window is closed, discard its Browser wrapper so
+    // reopening it can apply the latest path and inherited dimensions instead
+    // of recreating a BrowserWindow from the wrapper's original options.
+    browser.browserWindow.on('closed', () => {
+      if (!(identifier in appBrowsers) && this.browsers.get(identifier) === browser) {
+        this.browsers.delete(identifier);
+      }
     });
 
     return browser;
@@ -259,6 +402,41 @@ export class BrowserManager {
     } else {
       browser?.browserWindow.maximize();
     }
+  }
+
+  isWindowMaximized(identifier: string) {
+    const browser = this.browsers.get(identifier);
+    return browser?.browserWindow.isMaximized() ?? false;
+  }
+
+  isWindowFullScreen(identifier: string) {
+    const browser = this.browsers.get(identifier);
+    return browser?.browserWindow.isFullScreen() ?? false;
+  }
+
+  setWindowSize(identifier: string, size: { height?: number; width?: number }) {
+    const browser = this.browsers.get(identifier);
+    browser?.setWindowSize(size);
+  }
+
+  getWindowSize(identifier: string) {
+    const browser = this.browsers.get(identifier);
+    return browser?.browserWindow.getBounds();
+  }
+
+  setWindowMinimumSize(identifier: string, size: { height?: number; width?: number }) {
+    const browser = this.browsers.get(identifier);
+    browser?.setWindowMinimumSize(size);
+  }
+
+  setWindowAlwaysOnTop(identifier: string, flag: boolean) {
+    const browser = this.browsers.get(identifier);
+    browser?.browserWindow.setAlwaysOnTop(flag);
+  }
+
+  isWindowAlwaysOnTop(identifier: string) {
+    const browser = this.browsers.get(identifier);
+    return browser?.browserWindow.isAlwaysOnTop() ?? false;
   }
 
   getIdentifierByWebContents(webContents: WebContents): string | null {

@@ -1,4 +1,4 @@
-import { AIChatModelCard } from '../types/aiModel';
+import { type AIChatModelCard } from '../types/aiModel';
 
 const anthropicChatModels: AIChatModelCard[] = [
   {
@@ -9,18 +9,594 @@ const anthropicChatModels: AIChatModelCard[] = [
       structuredOutput: true,
       vision: true,
     },
-    contextWindowTokens: 200_000,
-    description: 'Claude Sonnet 4.5 是 Anthropic 迄今为止最智能的模型。',
-    displayName: 'Claude Sonnet 4.5',
+    contextWindowTokens: 1_000_000,
+    description:
+      "Claude Fable 5.2 is Anthropic's latest model for demanding reasoning and long-horizon agentic work, priced below Fable 5.1.",
+    displayName: 'Claude Fable 5.2',
     enabled: true,
+    family: 'claude-mythos',
+    generation: 'mythos-5.2',
+    id: 'claude-fable-5-2',
+    isOfficial: true,
+    knowledgeCutoff: '2026-06',
+    maxOutput: 128_000,
+    pricing: {
+      units: [
+        { name: 'textInput_cacheRead', rate: 0.2, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textInput', rate: 8, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textOutput', rate: 40, strategy: 'fixed', unit: 'millionTokens' },
+        {
+          lookup: { prices: { '1h': 16, '5m': 10 }, pricingParams: ['ttl'] },
+          name: 'textInput_cacheWrite',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+      ],
+    },
+    releasedAt: '2026-11-09',
+    // Like Fable 5.1, adaptive thinking is always on, so the `enableAdaptiveThinking` toggle is
+    // intentionally omitted.
+    // https://platform.claude.com/docs/en/models/fable-5-2/overview
+    settings: {
+      disabledParams: ['temperature', 'top_p'],
+      extendParams: ['disableContextCaching', 'opus47Effort'],
+      searchImpl: 'params',
+    },
+    type: 'chat',
+  },
+  {
+    abilities: {
+      functionCall: true,
+      reasoning: true,
+      search: true,
+      structuredOutput: true,
+      vision: true,
+    },
+    contextWindowTokens: 1_000_000,
+    description:
+      "Claude Haiku 5.5 is Anthropic's fastest and most cost-efficient model, built for high-volume, latency-sensitive work such as classification, extraction, routing, and subagent tasks, with adaptive thinking and adjustable effort.",
+    displayName: 'Claude Haiku 5.5',
+    enabled: true,
+    family: 'claude-haiku',
+    generation: 'claude-5.5',
+    id: 'claude-haiku-5-5',
+    isOfficial: true,
+    knowledgeCutoff: '2026-06',
+    maxOutput: 128_000,
+    // Priced by prompt length: once a prompt (cache reads and writes included) exceeds 100K
+    // tokens, every unit of the request is billed at the higher tier.
+    // https://platform.claude.com/docs/en/about-claude/pricing#long-context-pricing
+    pricing: {
+      units: [
+        {
+          name: 'textInput_cacheRead',
+          strategy: 'tiered',
+          tiers: [
+            { rate: 0.01, upTo: 100_000 },
+            { rate: 0.05, upTo: 'infinity' },
+          ],
+          unit: 'millionTokens',
+        },
+        {
+          name: 'textInput',
+          strategy: 'tiered',
+          tiers: [
+            { rate: 0.1, upTo: 100_000 },
+            { rate: 0.5, upTo: 'infinity' },
+          ],
+          unit: 'millionTokens',
+        },
+        {
+          name: 'textOutput',
+          strategy: 'tiered',
+          tiers: [
+            { rate: 0.5, upTo: 100_000 },
+            { rate: 2.5, upTo: 'infinity' },
+          ],
+          unit: 'millionTokens',
+        },
+        {
+          name: 'textInput_cacheWrite',
+          strategy: 'tiered',
+          tiers: [
+            { rate: 0.125, upTo: 100_000 },
+            { rate: 0.625, upTo: 'infinity' },
+          ],
+          unit: 'millionTokens',
+        },
+      ],
+    },
+    releasedAt: '2026-10-07',
+    // Unlike Opus 5.5 / Sonnet 5.5, thinking can still be disabled (at effort `high` or below),
+    // so the `enableAdaptiveThinking` toggle stays.
+    // https://platform.claude.com/docs/en/models/haiku-5-5/whats-new-haiku-5-5
+    settings: {
+      disabledParams: ['temperature', 'top_p'],
+      extendParams: ['disableContextCaching', 'enableAdaptiveThinking', 'opus47Effort'],
+      searchImpl: 'params',
+    },
+    type: 'chat',
+  },
+  {
+    abilities: {
+      functionCall: true,
+      reasoning: true,
+      search: true,
+      structuredOutput: true,
+      vision: true,
+    },
+    contextWindowTokens: 1_000_000,
+    description:
+      'Claude Sonnet 5.5 is a smarter, more efficient Sonnet that improves on Sonnet 5 in coding and knowledge work at the same base price, with cache reads at half the cost.',
+    displayName: 'Claude Sonnet 5.5',
+    enabled: true,
+    family: 'claude-sonnet',
+    generation: 'claude-5.5',
+    id: 'claude-sonnet-5-5',
+    isOfficial: true,
+    knowledgeCutoff: '2026-06',
+    maxOutput: 128_000,
+    // https://platform.claude.com/docs/en/about-claude/pricing
+    pricing: {
+      units: [
+        { name: 'textInput_cacheRead', rate: 0.1, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textInput', rate: 2, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textOutput', rate: 10, strategy: 'fixed', unit: 'millionTokens' },
+        {
+          lookup: { prices: { '1h': 4, '5m': 2.5 }, pricingParams: ['ttl'] },
+          name: 'textInput_cacheWrite',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+      ],
+    },
+    releasedAt: '2026-09-28',
+    // Like Opus 5.5, thinking is always on (`thinking.type: disabled` is rejected), so the
+    // `enableAdaptiveThinking` toggle is intentionally omitted.
+    // https://platform.claude.com/docs/en/models/sonnet-5-5/migration-guide#thinking-runs-by-default
+    settings: {
+      disabledParams: ['temperature', 'top_p'],
+      extendParams: ['disableContextCaching', 'opus47Effort'],
+      searchImpl: 'params',
+    },
+    type: 'chat',
+  },
+  {
+    abilities: {
+      functionCall: true,
+      reasoning: true,
+      search: true,
+      structuredOutput: true,
+      vision: true,
+    },
+    contextWindowTokens: 1_000_000,
+    description:
+      'Claude Opus 5.5 is built for long-running agentic coding and knowledge work, outperforming Claude Fable 5.1 on Terminal-Bench 4.0 at a lower price than Claude Opus 5.',
+    displayName: 'Claude Opus 5.5',
+    enabled: true,
+    family: 'claude-opus',
+    generation: 'claude-5.5',
+    id: 'claude-opus-5-5',
+    isOfficial: true,
+    knowledgeCutoff: '2026-06',
+    maxOutput: 128_000,
+    pricing: {
+      units: [
+        { name: 'textInput_cacheRead', rate: 0.2, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textInput', rate: 4, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textOutput', rate: 20, strategy: 'fixed', unit: 'millionTokens' },
+        {
+          lookup: { prices: { '1h': 8, '5m': 5 }, pricingParams: ['ttl'] },
+          name: 'textInput_cacheWrite',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+      ],
+    },
+    releasedAt: '2026-09-22',
+    // Like Fable 5.1, thinking is always on (400 on `thinking.type: disabled`), so the
+    // `enableAdaptiveThinking` toggle is intentionally omitted.
+    // https://platform.claude.com/docs/en/models/opus-5-5/whats-new-opus-5-5#breaking-changes
+    settings: {
+      disabledParams: ['temperature', 'top_p'],
+      extendParams: ['disableContextCaching', 'opus47Effort'],
+      searchImpl: 'params',
+    },
+    type: 'chat',
+  },
+  {
+    abilities: {
+      functionCall: true,
+      reasoning: true,
+      search: true,
+      structuredOutput: true,
+      vision: true,
+    },
+    contextWindowTokens: 1_000_000,
+    description:
+      "Claude Fable 5.1 is Anthropic's most capable generally available model. It outperforms Fable 5 on long-running coding and research at the same base price, with cache reads at a quarter of the cost.",
+    displayName: 'Claude Fable 5.1',
+    enabled: true,
+    family: 'claude-mythos',
+    generation: 'mythos-5.1',
+    id: 'claude-fable-5-1',
+    isOfficial: true,
+    knowledgeCutoff: '2026-06',
+    maxOutput: 128_000,
+    pricing: {
+      units: [
+        { name: 'textInput_cacheRead', rate: 0.25, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textInput', rate: 10, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textOutput', rate: 50, strategy: 'fixed', unit: 'millionTokens' },
+        {
+          lookup: { prices: { '1h': 20, '5m': 12.5 }, pricingParams: ['ttl'] },
+          name: 'textInput_cacheWrite',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+      ],
+    },
+    releasedAt: '2026-09-01',
+    // Adaptive thinking is always on and cannot be disabled (400 on `thinking.type: disabled`),
+    // so the `enableAdaptiveThinking` toggle from Fable 5 is intentionally omitted.
+    // https://platform.claude.com/docs/en/models/fable-5-1/migration-guide
+    settings: {
+      disabledParams: ['temperature', 'top_p'],
+      extendParams: ['disableContextCaching', 'opus47Effort'],
+      searchImpl: 'params',
+    },
+    type: 'chat',
+  },
+  {
+    abilities: {
+      functionCall: true,
+      reasoning: true,
+      search: true,
+      structuredOutput: true,
+      vision: true,
+    },
+    contextWindowTokens: 1_000_000,
+    description:
+      "Claude Fable 5 is Anthropic's strongest model — a new tier above Opus for the most demanding reasoning, agentic work, and coding, at a premium price.",
+    displayName: 'Claude Fable 5',
+    enabled: true,
+    family: 'claude-mythos',
+    generation: 'mythos-5',
+    id: 'claude-fable-5',
+    isOfficial: true,
+    knowledgeCutoff: '2026-01',
+    maxOutput: 128_000,
+    pricing: {
+      units: [
+        { name: 'textInput_cacheRead', rate: 1, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textInput', rate: 10, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textOutput', rate: 50, strategy: 'fixed', unit: 'millionTokens' },
+        {
+          lookup: { prices: { '1h': 20, '5m': 12.5 }, pricingParams: ['ttl'] },
+          name: 'textInput_cacheWrite',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+      ],
+    },
+    releasedAt: '2026-06-09',
+    settings: {
+      disabledParams: ['temperature', 'top_p'],
+      extendParams: ['disableContextCaching', 'enableAdaptiveThinking', 'opus47Effort'],
+      searchImpl: 'params',
+    },
+    type: 'chat',
+  },
+  {
+    abilities: {
+      functionCall: true,
+      reasoning: true,
+      search: true,
+      structuredOutput: true,
+      vision: true,
+    },
+    contextWindowTokens: 1_000_000,
+    description:
+      "Claude Opus 5 is Anthropic's strongest Opus model, built for deep reasoning, agentic coding, and long-horizon professional work.",
+    displayName: 'Claude Opus 5',
+    enabled: true,
+    family: 'claude-opus',
+    generation: 'claude-5',
+    id: 'claude-opus-5',
+    isOfficial: true,
+    knowledgeCutoff: '2026-05',
+    maxOutput: 128_000,
+    pricing: {
+      units: [
+        { name: 'textInput_cacheRead', rate: 0.5, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textInput', rate: 5, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textOutput', rate: 25, strategy: 'fixed', unit: 'millionTokens' },
+        {
+          lookup: { prices: { '1h': 10, '5m': 6.25 }, pricingParams: ['ttl'] },
+          name: 'textInput_cacheWrite',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+      ],
+    },
+    releasedAt: '2026-07-24',
+    settings: {
+      disabledParams: ['temperature', 'top_p'],
+      extendParams: ['disableContextCaching', 'enableAdaptiveThinking', 'opus47Effort'],
+      searchImpl: 'params',
+    },
+    type: 'chat',
+  },
+  {
+    abilities: {
+      functionCall: true,
+      reasoning: true,
+      search: true,
+      structuredOutput: true,
+      vision: true,
+    },
+    contextWindowTokens: 1_000_000,
+    description:
+      "Claude Sonnet 5 is Anthropic's most agentic Sonnet model, built for sustained coding, tool use, and long-context workflows with Sonnet-tier speed and efficiency.",
+    displayName: 'Claude Sonnet 5',
+    enabled: true,
+    family: 'claude-sonnet',
+    generation: 'claude-5',
+    id: 'claude-sonnet-5',
+    isOfficial: true,
+    knowledgeCutoff: '2026-01',
+    maxOutput: 128_000,
+    // The $2 / $10 launch pricing became the standard price; the increase to $3 / $15 that was
+    // scheduled for 2026-09-01 did not happen.
+    // https://platform.claude.com/docs/en/about-claude/pricing
+    pricing: {
+      units: [
+        { name: 'textInput_cacheRead', rate: 0.2, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textInput', rate: 2, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textOutput', rate: 10, strategy: 'fixed', unit: 'millionTokens' },
+        {
+          lookup: { prices: { '1h': 4, '5m': 2.5 }, pricingParams: ['ttl'] },
+          name: 'textInput_cacheWrite',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+      ],
+    },
+    releasedAt: '2026-06-30',
+    settings: {
+      disabledParams: ['temperature', 'top_p'],
+      extendParams: ['disableContextCaching', 'enableAdaptiveThinking', 'opus47Effort'],
+      searchImpl: 'params',
+    },
+    type: 'chat',
+  },
+  {
+    abilities: {
+      functionCall: true,
+      reasoning: true,
+      search: true,
+      structuredOutput: true,
+      vision: true,
+    },
+    contextWindowTokens: 1_000_000,
+    description:
+      "Claude Opus 4.8 is Anthropic's flagship Opus model, building on Opus 4.7 with improvements across reasoning, agentic coding, and tool use.",
+    displayName: 'Claude Opus 4.8',
+    enabled: true,
+    family: 'claude-opus',
+    generation: 'claude-4.8',
+    id: 'claude-opus-4-8',
+    isOfficial: true,
+    knowledgeCutoff: '2026-01',
+    maxOutput: 128_000,
+    pricing: {
+      units: [
+        { name: 'textInput_cacheRead', rate: 0.5, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textInput', rate: 5, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textOutput', rate: 25, strategy: 'fixed', unit: 'millionTokens' },
+        {
+          lookup: { prices: { '1h': 10, '5m': 6.25 }, pricingParams: ['ttl'] },
+          name: 'textInput_cacheWrite',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+      ],
+    },
+    releasedAt: '2026-05-28',
+    settings: {
+      disabledParams: ['temperature', 'top_p'],
+      extendParams: ['disableContextCaching', 'enableAdaptiveThinking', 'opus47Effort'],
+      searchImpl: 'params',
+    },
+    type: 'chat',
+  },
+  {
+    abilities: {
+      functionCall: true,
+      reasoning: true,
+      search: true,
+      structuredOutput: true,
+      vision: true,
+    },
+    contextWindowTokens: 1_000_000,
+    description:
+      "Claude Opus 4.7 is Anthropic's most capable generally available model for complex reasoning and agentic coding.",
+    displayName: 'Claude Opus 4.7',
+    enabled: true,
+    family: 'claude-opus',
+    generation: 'claude-4.7',
+    id: 'claude-opus-4-7',
+    isOfficial: true,
+    knowledgeCutoff: '2026-01',
+    maxOutput: 128_000,
+    pricing: {
+      units: [
+        { name: 'textInput_cacheRead', rate: 0.5, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textInput', rate: 5, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textOutput', rate: 25, strategy: 'fixed', unit: 'millionTokens' },
+        {
+          lookup: { prices: { '1h': 10, '5m': 6.25 }, pricingParams: ['ttl'] },
+          name: 'textInput_cacheWrite',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+      ],
+    },
+    releasedAt: '2026-04-16',
+    settings: {
+      disabledParams: ['temperature', 'top_p'],
+      extendParams: ['disableContextCaching', 'enableAdaptiveThinking', 'opus47Effort'],
+      searchImpl: 'params',
+    },
+    type: 'chat',
+  },
+  {
+    abilities: {
+      functionCall: true,
+      reasoning: true,
+      search: true,
+      structuredOutput: true,
+      vision: true,
+    },
+    contextWindowTokens: 1_000_000,
+    description:
+      'Claude Opus 4.6 is Anthropic’s most intelligent model for building agents and coding.',
+    displayName: 'Claude Opus 4.6',
+    family: 'claude-opus',
+    generation: 'claude-4.6',
+    id: 'claude-opus-4-6',
+    isOfficial: true,
+    knowledgeCutoff: '2025-05',
+    maxOutput: 128_000,
+    pricing: {
+      units: [
+        { name: 'textInput_cacheRead', rate: 0.5, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textInput', rate: 5, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textOutput', rate: 25, strategy: 'fixed', unit: 'millionTokens' },
+        {
+          lookup: { prices: { '1h': 10, '5m': 6.25 }, pricingParams: ['ttl'] },
+          name: 'textInput_cacheWrite',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+      ],
+    },
+    releasedAt: '2026-02-05',
+    settings: {
+      extendParams: ['disableContextCaching', 'enableAdaptiveThinking', 'effort'],
+      searchImpl: 'params',
+    },
+    type: 'chat',
+  },
+  {
+    abilities: {
+      functionCall: true,
+      reasoning: true,
+      search: true,
+      structuredOutput: true,
+      vision: true,
+    },
+    contextWindowTokens: 1_000_000,
+    description: 'Claude Sonnet 4.6 is Anthropic’s best combination of speed and intelligence.',
+    displayName: 'Claude Sonnet 4.6',
+    enabled: true,
+    family: 'claude-sonnet',
+    generation: 'claude-4.6',
+    id: 'claude-sonnet-4-6',
+    isOfficial: true,
+    knowledgeCutoff: '2025-08',
+    maxOutput: 64_000,
+    pricing: {
+      units: [
+        { name: 'textInput_cacheRead', rate: 0.3, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textInput', rate: 3, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textOutput', rate: 15, strategy: 'fixed', unit: 'millionTokens' },
+        {
+          lookup: { prices: { '1h': 6, '5m': 3.75 }, pricingParams: ['ttl'] },
+          name: 'textInput_cacheWrite',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+      ],
+    },
+    releasedAt: '2026-02-17',
+    settings: {
+      extendParams: [
+        'disableContextCaching',
+        'enableAdaptiveThinking',
+        'enableReasoning',
+        'reasoningBudgetToken',
+        'effort',
+      ],
+      searchImpl: 'params',
+    },
+    type: 'chat',
+  },
+  {
+    abilities: {
+      functionCall: true,
+      reasoning: true,
+      search: true,
+      structuredOutput: true,
+      vision: true,
+    },
+    contextWindowTokens: 200_000,
+    description:
+      'Claude Opus 4.5 is Anthropic’s flagship model, combining top-tier intelligence with scalable performance for complex, high-quality reasoning tasks.',
+    displayName: 'Claude Opus 4.5',
+    family: 'claude-opus',
+    generation: 'claude-4.5',
+    id: 'claude-opus-4-5-20251101',
+    knowledgeCutoff: '2025-05',
+    maxOutput: 64_000,
+    pricing: {
+      units: [
+        { name: 'textInput_cacheRead', rate: 0.5, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textInput', rate: 5, strategy: 'fixed', unit: 'millionTokens' },
+        { name: 'textOutput', rate: 25, strategy: 'fixed', unit: 'millionTokens' },
+        {
+          lookup: { prices: { '1h': 10, '5m': 6.25 }, pricingParams: ['ttl'] },
+          name: 'textInput_cacheWrite',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+      ],
+    },
+    releasedAt: '2025-11-24',
+    settings: {
+      extendParams: ['disableContextCaching', 'enableReasoning', 'reasoningBudgetToken'],
+      searchImpl: 'params',
+    },
+    type: 'chat',
+  },
+  {
+    abilities: {
+      functionCall: true,
+      reasoning: true,
+      search: true,
+      structuredOutput: true,
+      vision: true,
+    },
+    contextWindowTokens: 200_000,
+    description: 'Claude Sonnet 4.5 is Anthropic’s most intelligent model to date.',
+    displayName: 'Claude Sonnet 4.5',
+    family: 'claude-sonnet',
+    generation: 'claude-4.5',
     id: 'claude-sonnet-4-5-20250929',
+    isOfficial: true,
+    knowledgeCutoff: '2025-01',
     maxOutput: 64_000,
     pricing: {
       units: [
         { name: 'textInput', rate: 3, strategy: 'fixed', unit: 'millionTokens' },
         { name: 'textOutput', rate: 15, strategy: 'fixed', unit: 'millionTokens' },
         { name: 'textInput_cacheRead', rate: 0.3, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textInput_cacheWrite', rate: 3.75, strategy: 'fixed', unit: 'millionTokens' },
+        {
+          lookup: { prices: { '1h': 6, '5m': 3.75 }, pricingParams: ['ttl'] },
+          name: 'textInput_cacheWrite',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
       ],
     },
     releasedAt: '2025-09-29',
@@ -39,10 +615,15 @@ const anthropicChatModels: AIChatModelCard[] = [
       vision: true,
     },
     contextWindowTokens: 200_000,
-    description: 'Claude Haiku 4.5 是 Anthropic 最快且最智能的 Haiku 模型，具有闪电般的速度和扩展思考能力。',
+    description:
+      'Claude Haiku 4.5 is Anthropic’s fastest and smartest Haiku model, with lightning speed and extended reasoning.',
     displayName: 'Claude Haiku 4.5',
     enabled: true,
+    family: 'claude-haiku',
+    generation: 'claude-4.5',
     id: 'claude-haiku-4-5-20251001',
+    isOfficial: true,
+    knowledgeCutoff: '2025-02',
     maxOutput: 64_000,
     pricing: {
       units: [
@@ -61,292 +642,6 @@ const anthropicChatModels: AIChatModelCard[] = [
     settings: {
       extendParams: ['disableContextCaching', 'enableReasoning', 'reasoningBudgetToken'],
       searchImpl: 'params',
-    },
-    type: 'chat',
-  },
-  {
-    abilities: {
-      functionCall: true,
-      reasoning: true,
-      search: true,
-      vision: true,
-    },
-    contextWindowTokens: 200_000,
-    description:
-      'Claude Opus 4.1 是 Anthropic 最新的用于处理高度复杂任务的最强大模型。它在性能、智能、流畅性和理解力方面表现卓越。',
-    displayName: 'Claude Opus 4.1',
-    enabled: true,
-    id: 'claude-opus-4-1-20250805',
-    maxOutput: 32_000,
-    pricing: {
-      units: [
-        { name: 'textInput_cacheRead', rate: 1.5, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textInput', rate: 15, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textOutput', rate: 75, strategy: 'fixed', unit: 'millionTokens' },
-        {
-          lookup: { prices: { '1h': 30, '5m': 18.75 }, pricingParams: ['ttl'] },
-          name: 'textInput_cacheWrite',
-          strategy: 'lookup',
-          unit: 'millionTokens',
-        },
-      ],
-    },
-    releasedAt: '2025-08-05',
-    settings: {
-      extendParams: ['disableContextCaching', 'enableReasoning', 'reasoningBudgetToken'],
-      searchImpl: 'params',
-    },
-    type: 'chat',
-  },
-  {
-    abilities: {
-      functionCall: true,
-      reasoning: true,
-      search: true,
-      vision: true,
-    },
-    contextWindowTokens: 200_000,
-    description:
-      'Claude Opus 4 是 Anthropic 用于处理高度复杂任务的最强大模型。它在性能、智能、流畅性和理解力方面表现卓越。',
-    displayName: 'Claude Opus 4',
-    id: 'claude-opus-4-20250514',
-    maxOutput: 32_000,
-    pricing: {
-      units: [
-        { name: 'textInput_cacheRead', rate: 1.5, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textInput', rate: 15, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textOutput', rate: 75, strategy: 'fixed', unit: 'millionTokens' },
-        {
-          lookup: { prices: { '1h': 30, '5m': 18.75 }, pricingParams: ['ttl'] },
-          name: 'textInput_cacheWrite',
-          strategy: 'lookup',
-          unit: 'millionTokens',
-        },
-      ],
-    },
-    releasedAt: '2025-05-23',
-    settings: {
-      extendParams: ['disableContextCaching', 'enableReasoning', 'reasoningBudgetToken'],
-      searchImpl: 'params',
-    },
-    type: 'chat',
-  },
-  {
-    abilities: {
-      functionCall: true,
-      reasoning: true,
-      search: true,
-      vision: true,
-    },
-    contextWindowTokens: 200_000,
-    description:
-      'Claude Sonnet 4 可以产生近乎即时的响应或延长的逐步思考，用户可以清晰地看到这些过程。API 用户还可以对模型思考的时间进行细致的控制',
-    displayName: 'Claude Sonnet 4',
-    id: 'claude-sonnet-4-20250514',
-    maxOutput: 64_000,
-    pricing: {
-      units: [
-        { name: 'textInput_cacheRead', rate: 0.3, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textInput', rate: 3, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textOutput', rate: 15, strategy: 'fixed', unit: 'millionTokens' },
-        {
-          lookup: { prices: { '1h': 6, '5m': 3.75 }, pricingParams: ['ttl'] },
-          name: 'textInput_cacheWrite',
-          strategy: 'lookup',
-          unit: 'millionTokens',
-        },
-      ],
-    },
-    releasedAt: '2025-05-23',
-    settings: {
-      extendParams: ['disableContextCaching', 'enableReasoning', 'reasoningBudgetToken'],
-      searchImpl: 'params',
-    },
-    type: 'chat',
-  },
-  {
-    abilities: {
-      functionCall: true,
-      reasoning: true,
-      search: true,
-      vision: true,
-    },
-    contextWindowTokens: 200_000,
-    description:
-      'Claude 3.7 Sonnet 是 Anthropic 迄今为止最智能的模型，也是市场上首个混合推理模型。Claude 3.7 Sonnet 可以产生近乎即时的响应或延长的逐步思考，用户可以清晰地看到这些过程。Sonnet 特别擅长编程、数据科学、视觉处理、代理任务。',
-    displayName: 'Claude 3.7 Sonnet',
-    id: 'claude-3-7-sonnet-20250219',
-    maxOutput: 64_000,
-    pricing: {
-      units: [
-        { name: 'textInput_cacheRead', rate: 0.3, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textInput', rate: 3, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textOutput', rate: 15, strategy: 'fixed', unit: 'millionTokens' },
-        {
-          lookup: { prices: { '1h': 6, '5m': 3.75 }, pricingParams: ['ttl'] },
-          name: 'textInput_cacheWrite',
-          strategy: 'lookup',
-          unit: 'millionTokens',
-        },
-      ],
-    },
-    releasedAt: '2025-02-24',
-    settings: {
-      extendParams: ['disableContextCaching', 'enableReasoning', 'reasoningBudgetToken'],
-      searchImpl: 'params',
-    },
-    type: 'chat',
-  },
-  {
-    abilities: {
-      functionCall: true,
-      search: true,
-      vision: true,
-    },
-    contextWindowTokens: 200_000,
-    description:
-      'Claude 3.5 Sonnet 提供了超越 Opus 的能力和比 Sonnet 更快的速度，同时保持与 Sonnet 相同的价格。Sonnet 特别擅长编程、数据科学、视觉处理、代理任务。',
-    displayName: 'Claude 3.5 Sonnet (New)',
-    id: 'claude-3-5-sonnet-20241022',
-    maxOutput: 8192,
-    pricing: {
-      units: [
-        { name: 'textInput_cacheRead', rate: 0.3, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textInput', rate: 3, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textOutput', rate: 15, strategy: 'fixed', unit: 'millionTokens' },
-        {
-          lookup: { prices: { '1h': 6, '5m': 3.75 }, pricingParams: ['ttl'] },
-          name: 'textInput_cacheWrite',
-          strategy: 'lookup',
-          unit: 'millionTokens',
-        },
-      ],
-    },
-    releasedAt: '2024-10-22',
-    settings: {
-      extendParams: ['disableContextCaching'],
-      searchImpl: 'params',
-    },
-    type: 'chat',
-  },
-  {
-    abilities: {
-      functionCall: true,
-      vision: true,
-    },
-    contextWindowTokens: 200_000,
-    description:
-      'Claude 3.5 Sonnet 提供了超越 Opus 的能力和比 Sonnet 更快的速度，同时保持与 Sonnet 相同的价格。Sonnet 特别擅长编程、数据科学、视觉处理、代理任务。',
-    displayName: 'Claude 3.5 Sonnet (Old)',
-    id: 'claude-3-5-sonnet-20240620',
-    maxOutput: 8192,
-    pricing: {
-      units: [
-        { name: 'textInput_cacheRead', rate: 0.3, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textInput', rate: 3, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textOutput', rate: 15, strategy: 'fixed', unit: 'millionTokens' },
-        {
-          lookup: { prices: { '1h': 6, '5m': 3.75 }, pricingParams: ['ttl'] },
-          name: 'textInput_cacheWrite',
-          strategy: 'lookup',
-          unit: 'millionTokens',
-        },
-      ],
-    },
-    releasedAt: '2024-06-20',
-    settings: {
-      extendParams: ['disableContextCaching'],
-      searchImpl: 'params',
-    },
-    type: 'chat',
-  },
-  {
-    abilities: {
-      functionCall: true,
-      vision: true,
-    },
-    contextWindowTokens: 200_000,
-    description:
-      'Claude 3.5 Haiku 是 Anthropic 最快的下一代模型。与 Claude 3 Haiku 相比，Claude 3.5 Haiku 在各项技能上都有所提升，并在许多智力基准测试中超越了上一代最大的模型 Claude 3 Opus。',
-    displayName: 'Claude 3.5 Haiku',
-    id: 'claude-3-5-haiku-20241022',
-    maxOutput: 8192,
-    pricing: {
-      units: [
-        { name: 'textInput_cacheRead', rate: 0.08, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textInput', rate: 0.8, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textOutput', rate: 4, strategy: 'fixed', unit: 'millionTokens' },
-        {
-          lookup: { prices: { '1h': 1.6, '5m': 1 }, pricingParams: ['ttl'] },
-          name: 'textInput_cacheWrite',
-          strategy: 'lookup',
-          unit: 'millionTokens',
-        },
-      ],
-    },
-    releasedAt: '2024-11-05',
-    settings: {
-      extendParams: ['disableContextCaching'],
-    },
-    type: 'chat',
-  },
-  {
-    abilities: {
-      functionCall: true,
-      vision: true,
-    },
-    contextWindowTokens: 200_000,
-    description:
-      'Claude 3 Haiku 是 Anthropic 的最快且最紧凑的模型，旨在实现近乎即时的响应。它具有快速且准确的定向性能。',
-    displayName: 'Claude 3 Haiku',
-    id: 'claude-3-haiku-20240307',
-    maxOutput: 4096,
-    pricing: {
-      units: [
-        { name: 'textInput_cacheRead', rate: 0.03, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textInput', rate: 0.25, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textOutput', rate: 1.25, strategy: 'fixed', unit: 'millionTokens' },
-        {
-          lookup: { prices: { '1h': 0.5, '5m': 0.3 }, pricingParams: ['ttl'] },
-          name: 'textInput_cacheWrite',
-          strategy: 'lookup',
-          unit: 'millionTokens',
-        },
-      ],
-    },
-    releasedAt: '2024-03-07',
-    settings: {
-      extendParams: ['disableContextCaching'],
-    },
-    type: 'chat',
-  },
-  {
-    abilities: {
-      functionCall: true,
-      vision: true,
-    },
-    contextWindowTokens: 200_000,
-    description:
-      'Claude 3 Opus 是 Anthropic 用于处理高度复杂任务的最强大模型。它在性能、智能、流畅性和理解力方面表现卓越。',
-    displayName: 'Claude 3 Opus',
-    id: 'claude-3-opus-20240229',
-    maxOutput: 4096,
-    pricing: {
-      units: [
-        { name: 'textInput_cacheRead', rate: 1.5, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textInput', rate: 15, strategy: 'fixed', unit: 'millionTokens' },
-        { name: 'textOutput', rate: 75, strategy: 'fixed', unit: 'millionTokens' },
-        {
-          lookup: { prices: { '1h': 30, '5m': 18.75 }, pricingParams: ['ttl'] },
-          name: 'textInput_cacheWrite',
-          strategy: 'lookup',
-          unit: 'millionTokens',
-        },
-      ],
-    },
-    releasedAt: '2024-02-29',
-    settings: {
-      extendParams: ['disableContextCaching'],
     },
     type: 'chat',
   },

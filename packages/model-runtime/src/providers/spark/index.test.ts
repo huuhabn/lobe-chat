@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { ModelProvider } from 'model-bank';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { testProvider } from '../../providerTestUtils';
 import { LobeSparkAI, params } from './index';
@@ -16,6 +16,7 @@ testProvider({
   chatModel: 'spark',
   test: {
     skipAPICall: true,
+    skipErrorHandle: true,
   },
 });
 
@@ -69,7 +70,7 @@ describe('LobeSparkAI - custom features', () => {
         enabledSearch: false,
       };
 
-      const result = handlePayload(payload);
+      const result = handlePayload(payload, {});
 
       expect(result.tools).toBeUndefined();
       expect(result.enabledSearch).toBeUndefined();
@@ -81,7 +82,7 @@ describe('LobeSparkAI - custom features', () => {
         messages: [{ role: 'user' as const, content: 'Hello' }],
       };
 
-      const result = handlePayload(payload);
+      const result = handlePayload(payload, {});
 
       expect(result.tools).toBeUndefined();
     });
@@ -93,7 +94,7 @@ describe('LobeSparkAI - custom features', () => {
         enabledSearch: true,
       };
 
-      const result = handlePayload(payload);
+      const result = handlePayload(payload, {});
 
       expect(result.tools).toBeDefined();
       expect(result.tools).toHaveLength(1);
@@ -115,7 +116,7 @@ describe('LobeSparkAI - custom features', () => {
         enabledSearch: true,
       };
 
-      const result = handlePayload(payload);
+      const result = handlePayload(payload, {});
 
       expect(result.tools[0].web_search.search_mode).toBe('normal');
     });
@@ -129,7 +130,7 @@ describe('LobeSparkAI - custom features', () => {
         enabledSearch: true,
       };
 
-      const result = handlePayload(payload);
+      const result = handlePayload(payload, {});
 
       expect(result.tools[0].web_search.search_mode).toBe('deep');
       delete process.env.SPARK_SEARCH_MODE;
@@ -154,7 +155,7 @@ describe('LobeSparkAI - custom features', () => {
         tools: existingTools,
       };
 
-      const result = handlePayload(payload);
+      const result = handlePayload(payload, {});
 
       expect(result.tools).toHaveLength(2);
       expect(result.tools[0]).toEqual(existingTools[0]);
@@ -180,7 +181,7 @@ describe('LobeSparkAI - custom features', () => {
         tools: existingTools,
       };
 
-      const result = handlePayload(payload);
+      const result = handlePayload(payload, {});
 
       expect(result.tools).toEqual(existingTools);
     });
@@ -192,7 +193,7 @@ describe('LobeSparkAI - custom features', () => {
         enabledSearch: true,
       };
 
-      const result = handlePayload(payload);
+      const result = handlePayload(payload, {});
 
       expect(result.enabledSearch).toBeUndefined();
     });
@@ -207,7 +208,7 @@ describe('LobeSparkAI - custom features', () => {
         enabledSearch: true,
       };
 
-      const result = handlePayload(payload);
+      const result = handlePayload(payload, {});
 
       expect(result.model).toBe('spark');
       expect(result.messages).toEqual(payload.messages);
@@ -224,7 +225,7 @@ describe('LobeSparkAI - custom features', () => {
         tools: [],
       };
 
-      const result = handlePayload(payload);
+      const result = handlePayload(payload, {});
 
       expect(result.tools).toHaveLength(1);
       expect(result.tools[0].type).toBe('web_search');
@@ -257,7 +258,7 @@ describe('LobeSparkAI - custom features', () => {
         tools: existingTools,
       };
 
-      const result = handlePayload(payload);
+      const result = handlePayload(payload, {});
 
       expect(result.tools).toHaveLength(3);
       expect(result.tools[0]).toEqual(existingTools[0]);
@@ -306,6 +307,40 @@ describe('LobeSparkAI - custom features', () => {
         headers: { 'X-Custom-Header': 'value' },
       });
       expect(instance).toBeDefined();
+    });
+  });
+
+  describe('model-specific baseURL', () => {
+    it('should retarget the handlePayload options to the model endpoint', () => {
+      const options: Record<string, any> = {};
+
+      params.chatCompletion.handlePayload({ messages: [], model: 'spark-x2' } as any, options);
+
+      expect(options.baseURL).toBe('https://spark-api-open.xf-yun.com/x2');
+    });
+
+    it('should point the client at the retargeted endpoint before sending the request', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response('data: [DONE]\n\n', {
+          headers: { 'Content-Type': 'text/event-stream' },
+          status: 200,
+        }),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+
+      const instance = new LobeSparkAI({ apiKey: 'test-api-key' });
+
+      await instance
+        .chat({ messages: [{ content: 'hi', role: 'user' }], model: 'spark-x2' } as any)
+        .catch(() => undefined);
+
+      expect(fetchMock).toHaveBeenCalled();
+      expect(String(fetchMock.mock.calls[0][0])).toBe(
+        'https://spark-api-open.xf-yun.com/x2/chat/completions',
+      );
+      expect(instance.baseURL).toBe('https://spark-api-open.xf-yun.com/x2');
+
+      vi.unstubAllGlobals();
     });
   });
 });

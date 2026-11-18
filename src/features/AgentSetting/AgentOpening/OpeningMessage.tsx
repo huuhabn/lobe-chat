@@ -1,75 +1,86 @@
 'use client';
 
-import { Button } from '@lobehub/ui';
+import { Button, Flexbox } from '@lobehub/ui';
 import { EditableMessage } from '@lobehub/ui/chat';
-import { createStyles } from 'antd-style';
+import { cssVar } from '@lobehub/ui/stylex/cssVar.stylex';
+import * as stylex from '@stylexjs/stylex';
 import { PencilLine } from 'lucide-react';
 import { memo, useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Flexbox } from 'react-layout-kit';
 
 import { useStore } from '../store';
 import { selectors } from '../store/selectors';
 
-export const useStyles = createStyles(({ css, token }) => ({
-  markdown: css`
-    border: unset;
-  `,
-  wrapper: css`
-    width: 100%;
-    padding: 8px;
-    border: 1px solid ${token.colorBorder};
-    border-radius: ${token.borderRadiusLG - 1}px;
-
-    background: ${token.colorBgContainer};
-  `,
-}));
+const styles = stylex.create({
+  markdown: {
+    borderWidth: 'unset',
+    borderStyle: 'unset',
+    borderColor: 'unset',
+  },
+  wrapper: {
+    width: '100%',
+    padding: '8px',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: cssVar.colorBorder,
+    borderRadius: `calc(${cssVar.borderRadiusLG} - 1px)`,
+    backgroundColor: cssVar.colorBgContainer,
+    backgroundImage: 'none',
+  },
+});
 
 const OpeningMessage = memo(() => {
   const { t } = useTranslation('setting');
-  const { styles } = useStyles();
 
   const openingMessage = useStore(selectors.openingMessage);
-  const updateConfig = useStore((s) => s.setAgentConfig);
+  const [disabled, updateConfig] = useStore((s) => [s.disabled, s.setAgentConfig]);
   const setOpeningMessage = useCallback(
     (message: string) => {
+      if (disabled) return;
+
       updateConfig({ openingMessage: message });
     },
-    [updateConfig],
+    [disabled, updateConfig],
   );
 
   const [editing, setEditing] = useState(false);
 
   const handleEdit = useCallback(() => {
-    setEditing(true);
-  }, []);
+    if (disabled) return;
 
-  const editIconButton = !editing && openingMessage && (
-    <Button onClick={handleEdit} size={'small'}>
+    setEditing(true);
+  }, [disabled]);
+
+  const editIconButton = !editing && openingMessage && !disabled && (
+    <Button disabled={disabled} size={'small'} onClick={handleEdit}>
       <PencilLine size={16} />
     </Button>
   );
 
   return (
-    <div className={styles.wrapper}>
+    <div {...stylex.props(styles.wrapper)}>
       <Flexbox direction={'horizontal'}>
         <EditableMessage
-          classNames={{
-            markdown: styles.markdown,
-          }}
           editButtonSize={'small'}
           editing={editing}
           height={'auto'}
-          onChange={setOpeningMessage}
-          onEditingChange={setEditing}
           placeholder={t('settingOpening.openingMessage.placeholder')}
-          showEditWhenEmpty
+          showEditWhenEmpty={!disabled}
+          value={openingMessage ?? ''}
+          variant={'borderless'}
+          classNames={{
+            markdown: stylex.props(styles.markdown).className,
+          }}
           text={{
             cancel: t('cancel', { ns: 'common' }),
             confirm: t('ok', { ns: 'common' }),
           }}
-          value={openingMessage ?? ''}
-          variant={'borderless'}
+          onChange={setOpeningMessage}
+          onEditingChange={(next) => {
+            if (disabled) return;
+
+            setEditing(next);
+          }}
         />
         {editIconButton}
       </Flexbox>

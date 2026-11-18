@@ -1,4 +1,6 @@
-import { ChatCompletionFunctions } from './chat';
+import type { ChatCompletionTool, ChatStreamPayload } from './chat';
+import type { ModelPricingContext } from './pricing';
+import type { OnUsageCallback } from './routeAttempt';
 
 interface GenerateObjectMessage {
   content: string;
@@ -6,7 +8,7 @@ interface GenerateObjectMessage {
   role: 'user' | 'system' | 'assistant';
 }
 
-interface GenerateObjectSchema {
+export interface GenerateObjectSchema {
   description?: string;
   name: string;
   schema: {
@@ -21,10 +23,11 @@ interface GenerateObjectSchema {
 export interface GenerateObjectPayload {
   messages: GenerateObjectMessage[];
   model: string;
+  reasoning_effort?: ChatStreamPayload['reasoning_effort'];
   responseApi?: boolean;
   schema?: GenerateObjectSchema;
-  systemRole?: string;
-  tools?: ChatCompletionFunctions[];
+  thinking?: ChatStreamPayload['thinking'];
+  tools?: ChatCompletionTool[];
 }
 
 export interface GenerateObjectOptions {
@@ -33,7 +36,23 @@ export interface GenerateObjectOptions {
    */
   headers?: Record<string, any>;
 
+  /** Free-form context passed to hooks (e.g. billing, routing). */
+  metadata?: Record<string, unknown>;
+
+  onUsage?: OnUsageCallback;
+
+  /** Request-scoped pricing context for model-bank pricing lookups. */
+  pricingContext?: ModelPricingContext;
+
   signal?: AbortSignal;
+  /**
+   * Structured tracing config consumed by tracing hooks (e.g.
+   * `llm_generation_tracing`). Loosely typed here so the runtime stays
+   * tracing-agnostic; callers should import `TracingOptions` from
+   * `@lobechat/llm-generation-tracing` for the strongly-typed shape.
+   */
+  tracing?: Record<string, unknown>;
+
   /**
    * userId for the GenerateObject
    */

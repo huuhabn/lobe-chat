@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { NetworkConnectionError, PageNotFoundError, TimeoutError } from '../../utils/errorType';
+import {
+  NetworkConnectionError,
+  PageNotFoundError,
+  TimeoutError,
+  UnsupportedContentError,
+} from '../../utils/errorType';
 import { naive } from '../naive';
 
 // Mock dependencies
@@ -13,7 +18,7 @@ vi.mock('../../utils/withTimeout', () => ({
   withTimeout: vi.fn(),
 }));
 
-vi.mock('ssrf-safe-fetch', () => ({
+vi.mock('@lobechat/ssrf-safe-fetch', () => ({
   ssrfSafeFetch: vi.fn(),
 }));
 
@@ -22,9 +27,10 @@ describe('naive crawler', () => {
     vi.clearAllMocks();
   });
 
-  it('should return undefined for normal pages (due to cloudflare logic)', async () => {
+  it('should return content for normal pages', async () => {
     const mockResponse = {
       status: 200,
+      ok: true,
       headers: new Map([['content-type', 'text/html']]),
       text: vi.fn().mockResolvedValue('<html><body>Test content</body></html>'),
     };
@@ -34,8 +40,8 @@ describe('naive crawler', () => {
 
     const { htmlToMarkdown } = await import('../../utils/htmlToMarkdown');
     vi.mocked(htmlToMarkdown).mockReturnValue({
-      content: 'Test content'.padEnd(101, ' '), // Ensure length > 100
-      title: 'Normal Page Title', // Not "Just a moment..." so it returns undefined
+      content: 'Test content'.padEnd(101, ' '),
+      title: 'Normal Page Title',
       description: 'Test description',
       siteName: 'Test Site',
       length: 101,
@@ -43,13 +49,101 @@ describe('naive crawler', () => {
 
     const result = await naive('https://example.com', { filterOptions: {} });
 
+    expect(result).toEqual({
+      content: 'Test content'.padEnd(101, ' '),
+      contentType: 'text',
+      description: 'Test description',
+      length: 101,
+      siteName: 'Test Site',
+      title: 'Normal Page Title',
+      url: 'https://example.com',
+    });
+  });
+
+  it('should throw UnsupportedContentError for non-document content types', async () => {
+    const { withTimeout } = await import('../../utils/withTimeout');
+    const { htmlToMarkdown } = await import('../../utils/htmlToMarkdown');
+
+    for (const contentType of ['image/png', 'image/svg+xml', 'font/woff2', 'video/mp4']) {
+      vi.mocked(withTimeout).mockResolvedValue({
+        status: 200,
+        ok: true,
+        headers: new Map([['content-type', contentType]]),
+        text: vi.fn().mockResolvedValue('binary'),
+      } as any);
+
+      await expect(naive('https://example.com/asset', { filterOptions: {} })).rejects.toThrow(
+        UnsupportedContentError,
+      );
+    }
+
+    expect(htmlToMarkdown).not.toHaveBeenCalled();
+  });
+
+  it('should skip PDF responses without downloading or parsing them as HTML', async () => {
+    const { withTimeout } = await import('../../utils/withTimeout');
+    const { htmlToMarkdown } = await import('../../utils/htmlToMarkdown');
+    const text = vi.fn().mockResolvedValue('%PDF-1.7\n...');
+
+    vi.mocked(withTimeout).mockResolvedValue({
+      status: 200,
+      ok: true,
+      headers: new Map([['content-type', 'application/pdf; qs=0.001']]),
+      text,
+    } as any);
+
+    const result = await naive('https://example.com/report.pdf', { filterOptions: {} });
+
     expect(result).toBeUndefined();
+    expect(text).not.toHaveBeenCalled();
+    expect(htmlToMarkdown).not.toHaveBeenCalled();
+  });
+
+  it('should skip binary bodies served under a text or missing content type', async () => {
+    const { withTimeout } = await import('../../utils/withTimeout');
+    const { htmlToMarkdown } = await import('../../utils/htmlToMarkdown');
+
+    const cases: [string | undefined, string][] = [
+      ['text/html', '%PDF-1.4\n%âãÏÓ\n1 0 obj'],
+      [undefined, '<html>\u0000\u0001\u0002 stream bytes'],
+    ];
+
+    for (const [contentType, body] of cases) {
+      vi.mocked(withTimeout).mockResolvedValue({
+        status: 200,
+        ok: true,
+        headers: new Map(contentType ? [['content-type', contentType]] : []),
+        text: vi.fn().mockResolvedValue(body),
+      } as any);
+
+      const result = await naive('https://example.com/download', { filterOptions: {} });
+
+      expect(result).toBeUndefined();
+    }
+
+    expect(htmlToMarkdown).not.toHaveBeenCalled();
+  });
+
+  it('should throw PageNotFoundError with status for 410 Gone', async () => {
+    const { withTimeout } = await import('../../utils/withTimeout');
+    vi.mocked(withTimeout).mockResolvedValue({
+      status: 410,
+      ok: false,
+      statusText: 'Gone',
+      headers: new Map(),
+      text: vi.fn().mockResolvedValue(''),
+    } as any);
+
+    await expect(naive('https://example.com/removed', { filterOptions: {} })).rejects.toMatchObject(
+      { name: 'PageNotFoundError', status: 410 },
+    );
   });
 
   it('should successfully crawl JSON content', async () => {
     const mockJsonData = { message: 'Hello world', data: [1, 2, 3] };
     const mockResponse = {
       status: 200,
+      ok: true,
       headers: new Map([['content-type', 'application/json']]),
       clone: () => ({
         json: vi.fn().mockResolvedValue(mockJsonData),
@@ -74,6 +168,7 @@ describe('naive crawler', () => {
     const mockText = '{"invalid": json}';
     const mockResponse = {
       status: 200,
+      ok: true,
       headers: new Map([['content-type', 'application/json']]),
       clone: () => ({
         json: vi.fn().mockRejectedValue(new Error('Invalid JSON')),
@@ -97,6 +192,7 @@ describe('naive crawler', () => {
   it('should return undefined for short content', async () => {
     const mockResponse = {
       status: 200,
+      ok: true,
       headers: new Map([['content-type', 'text/html']]),
       text: vi.fn().mockResolvedValue('<html><body>Short</body></html>'),
     };
@@ -116,9 +212,10 @@ describe('naive crawler', () => {
     expect(result).toBeUndefined();
   });
 
-  it('should return content when NOT blocked by Cloudflare', async () => {
+  it('should return undefined when blocked by Cloudflare', async () => {
     const mockResponse = {
       status: 200,
+      ok: true,
       headers: new Map([['content-type', 'text/html']]),
       text: vi.fn().mockResolvedValue('<html><body>Normal content</body></html>'),
     };
@@ -129,7 +226,7 @@ describe('naive crawler', () => {
     const { htmlToMarkdown } = await import('../../utils/htmlToMarkdown');
     vi.mocked(htmlToMarkdown).mockReturnValue({
       content: 'Test content'.padEnd(101, ' '),
-      title: 'Just a moment...', // Cloudflare blocking page - this will cause return
+      title: 'Just a moment...', // Cloudflare blocking page
       description: 'Test description',
       siteName: 'Test Site',
       length: 101,
@@ -137,15 +234,21 @@ describe('naive crawler', () => {
 
     const result = await naive('https://example.com', { filterOptions: {} });
 
-    expect(result).toEqual({
-      content: 'Test content'.padEnd(101, ' '),
-      contentType: 'text',
-      description: 'Test description',
-      length: 101,
-      siteName: 'Test Site',
-      title: 'Just a moment...',
-      url: 'https://example.com',
-    });
+    expect(result).toBeUndefined();
+  });
+
+  it('should throw error for non-ok status codes', async () => {
+    const mockResponse = {
+      status: 500,
+      ok: false,
+      statusText: 'Internal Server Error',
+      text: vi.fn().mockResolvedValue('Server Error'),
+    };
+
+    const { withTimeout } = await import('../../utils/withTimeout');
+    vi.mocked(withTimeout).mockResolvedValue(mockResponse as any);
+
+    await expect(naive('https://example.com', { filterOptions: {} })).rejects.toThrow(/500/);
   });
 
   it('should throw PageNotFoundError for 404 status', async () => {
@@ -164,7 +267,7 @@ describe('naive crawler', () => {
 
   it('should throw NetworkConnectionError for fetch failures', async () => {
     const { withTimeout } = await import('../../utils/withTimeout');
-    vi.mocked(withTimeout).mockRejectedValue(new Error('fetch failed'));
+    vi.mocked(withTimeout).mockRejectedValue(new TypeError('fetch failed'));
 
     await expect(naive('https://example.com', { filterOptions: {} })).rejects.toThrow(
       NetworkConnectionError,
@@ -194,6 +297,7 @@ describe('naive crawler', () => {
   it('should return undefined when HTML processing fails', async () => {
     const mockResponse = {
       status: 200,
+      ok: true,
       headers: new Map([['content-type', 'text/html']]),
       text: vi.fn().mockRejectedValue(new Error('Failed to read text')),
     };
@@ -209,6 +313,7 @@ describe('naive crawler', () => {
   it('should pass filter options to htmlToMarkdown', async () => {
     const mockResponse = {
       status: 200,
+      ok: true,
       headers: new Map([['content-type', 'text/html']]),
       text: vi.fn().mockResolvedValue('<html><body>Test content</body></html>'),
     };

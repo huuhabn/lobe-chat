@@ -1,52 +1,72 @@
-import { Button, Form, type FormItemProps, Segmented } from '@lobehub/ui';
-import { Switch } from 'antd';
+import { agentDisplayName, type UIChatMessage } from '@lobechat/types';
+import { Button, Flexbox, Switch, Tabs } from '@lobehub/ui';
+import { Form, type FormFieldProps, useForm } from '@lobehub/ui/form';
 import { CopyIcon } from 'lucide-react';
 import { memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Flexbox } from 'react-layout-kit';
 
 import { FORM_STYLE } from '@/const/layoutTokens';
 import { useImgToClipboard } from '@/hooks/useImgToClipboard';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { ImageType, imageTypeOptions, useScreenshot } from '@/hooks/useScreenshot';
-import { useSessionStore } from '@/store/session';
-import { sessionMetaSelectors } from '@/store/session/selectors';
-import { ChatMessage } from '@/types/message';
+import { useAgentStore } from '@/store/agent';
+import { agentSelectors } from '@/store/agent/selectors';
 
-import { useStyles } from '../style';
+import { contextSelectors, useConversationStore } from '../../../store';
+import { styles } from '../style';
 import Preview from './Preview';
-import { FieldType } from './type';
+import { type FieldType, WidthMode } from './type';
 
 const DEFAULT_FIELD_VALUE: FieldType = {
   imageType: ImageType.JPG,
-  withBackground: true,
+  widthMode: WidthMode.Wide,
+  withBackground: false,
   withFooter: true,
 };
 
-const ShareImage = memo<{ message: ChatMessage; mobile?: boolean; uniqueId?: string }>(
+const ShareImage = memo<{ message: UIChatMessage; mobile?: boolean; uniqueId?: string }>(
   ({ message, uniqueId }) => {
-    const currentAgentTitle = useSessionStore(sessionMetaSelectors.currentAgentTitle);
+    const agentId = useConversationStore(contextSelectors.agentId);
+    const currentAgentTitle = useAgentStore((s) =>
+      agentDisplayName(agentSelectors.getAgentMetaById(agentId)(s)),
+    );
+    const context = useConversationStore((s) => s.context);
     const [fieldValue, setFieldValue] = useState<FieldType>(DEFAULT_FIELD_VALUE);
+    const form = useForm({
+      initialValues: DEFAULT_FIELD_VALUE,
+      onValuesChange: (_, v) => setFieldValue(v),
+    });
     const { t } = useTranslation(['chat', 'common']);
-    const { styles } = useStyles();
 
-    // 生成唯一的预览ID，避免DOM冲突
+    const widthModeOptions = [
+      { key: WidthMode.Wide, label: t('shareModal.widthMode.wide') },
+      { key: WidthMode.Narrow, label: t('shareModal.widthMode.narrow') },
+    ];
+
+    // Generate a unique preview ID to avoid DOM conflicts
     const previewId = uniqueId ? `preview-${uniqueId}` : 'preview';
 
     const { loading, onDownload, title } = useScreenshot({
       id: `#${previewId}`,
       imageType: fieldValue.imageType,
-      title: currentAgentTitle,
+      title: currentAgentTitle ?? undefined,
     });
     const { loading: copyLoading, onCopy } = useImgToClipboard({ id: `#${previewId}` });
-    const settings: FormItemProps[] = [
+    const settings: FormFieldProps<FieldType>[] = [
+      {
+        children: <Tabs items={widthModeOptions} />,
+        label: t('shareModal.widthMode.label'),
+        layout: 'horizontal',
+        minWidth: undefined,
+        name: 'widthMode',
+        valueProp: 'activeKey',
+      },
       {
         children: <Switch />,
         label: t('shareModal.withBackground'),
         layout: 'horizontal',
         minWidth: undefined,
         name: 'withBackground',
-        valuePropName: 'checked',
       },
       {
         children: <Switch />,
@@ -54,14 +74,14 @@ const ShareImage = memo<{ message: ChatMessage; mobile?: boolean; uniqueId?: str
         layout: 'horizontal',
         minWidth: undefined,
         name: 'withFooter',
-        valuePropName: 'checked',
       },
       {
-        children: <Segmented options={imageTypeOptions} />,
+        children: <Tabs items={imageTypeOptions} />,
         label: t('shareModal.imageType'),
-        layout: 'horizontal',
+        layout: 'vertical',
         minWidth: undefined,
         name: 'imageType',
+        valueProp: 'activeKey',
       },
     ];
 
@@ -73,13 +93,13 @@ const ShareImage = memo<{ message: ChatMessage; mobile?: boolean; uniqueId?: str
           block
           icon={CopyIcon}
           loading={copyLoading}
-          onClick={() => onCopy()}
           size={isMobile ? undefined : 'large'}
           type={'primary'}
+          onClick={() => onCopy()}
         >
           {t('copy', { ns: 'common' })}
         </Button>
-        <Button block loading={loading} onClick={onDownload} size={isMobile ? undefined : 'large'}>
+        <Button block loading={loading} size={isMobile ? undefined : 'large'} onClick={onDownload}>
           {t('shareModal.download')}
         </Button>
       </>
@@ -88,20 +108,20 @@ const ShareImage = memo<{ message: ChatMessage; mobile?: boolean; uniqueId?: str
     return (
       <>
         <Flexbox className={styles.body} gap={16} horizontal={!isMobile}>
-          <Preview title={title} {...fieldValue} message={message} previewId={previewId} />
+          <Preview
+            context={context}
+            title={title}
+            {...fieldValue}
+            message={message}
+            previewId={previewId}
+          />
           <Flexbox className={styles.sidebar} gap={12}>
-            <Form
-              initialValues={DEFAULT_FIELD_VALUE}
-              items={settings}
-              itemsType={'flat'}
-              onValuesChange={(_, v) => setFieldValue(v)}
-              {...FORM_STYLE}
-            />
+            <Form form={form} items={settings} itemsType={'flat'} {...FORM_STYLE} />
             {!isMobile && button}
           </Flexbox>
         </Flexbox>
         {isMobile && (
-          <Flexbox className={styles.footer} gap={8} horizontal>
+          <Flexbox horizontal className={styles.footer} gap={8}>
             {button}
           </Flexbox>
         )}

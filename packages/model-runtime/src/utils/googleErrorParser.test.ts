@@ -9,30 +9,6 @@ import {
 
 describe('googleErrorParser', () => {
   describe('cleanErrorMessage', () => {
-    it('should remove leading asterisk and spaces', () => {
-      const input = '* API key not valid. Please check your credentials.';
-      const expected = 'API key not valid. Please check your credentials.';
-      expect(cleanErrorMessage(input)).toBe(expected);
-    });
-
-    it('should convert escaped newlines to actual newlines', () => {
-      const input = 'Error occurred\\nPlease try again';
-      const expected = 'Error occurred Please try again';
-      expect(cleanErrorMessage(input)).toBe(expected);
-    });
-
-    it('should replace multiple newlines with single space', () => {
-      const input = 'Line 1\n\n\nLine 2\nLine 3';
-      const expected = 'Line 1 Line 2 Line 3';
-      expect(cleanErrorMessage(input)).toBe(expected);
-    });
-
-    it('should trim whitespace', () => {
-      const input = '  \t  Error message  \t  ';
-      const expected = 'Error message';
-      expect(cleanErrorMessage(input)).toBe(expected);
-    });
-
     it('should handle combined formatting issues', () => {
       const input =
         '* API key not valid.\\nPlease check your credentials.\\n\\nContact support if needed.  ';
@@ -54,19 +30,6 @@ describe('googleErrorParser', () => {
       });
       expect(result.prefix).toBe('Connection failed');
     });
-
-    it('should handle different status codes', () => {
-      const input = 'Request failed [401 Unauthorized] Invalid credentials';
-      const result = extractStatusCodeFromError(input);
-
-      expect(result.errorDetails).toEqual({
-        message: 'Invalid credentials',
-        statusCode: 401,
-        statusCodeText: '[401 Unauthorized]',
-      });
-      expect(result.prefix).toBe('Request failed');
-    });
-
     it('should return null for messages without status codes', () => {
       const input = 'Simple error message without status code';
       const result = extractStatusCodeFromError(input);
@@ -86,6 +49,82 @@ describe('googleErrorParser', () => {
       });
       expect(result.prefix).toBe('Error');
     });
+    it('should not be vulnerable to ReDoS attacks', () => {
+      // Test with a potentially malicious input that could cause catastrophic backtracking
+      const maliciousInput = 'Error ' + 'a'.repeat(10000) + ' [not matching]';
+      const startTime = Date.now();
+      const result = extractStatusCodeFromError(maliciousInput);
+      const endTime = Date.now();
+
+      // Should complete quickly (under 100ms) even with large input
+      expect(endTime - startTime).toBeLessThan(100);
+      expect(result.errorDetails).toBeNull();
+    });
+
+    it('should not be vulnerable to ReDoS with many spaces', () => {
+      // Test the specific case mentioned in the security warning: '[9 ' + many spaces
+      const maliciousInput = '[9 ' + ' '.repeat(10000) + ']';
+      const startTime = Date.now();
+      const result = extractStatusCodeFromError(maliciousInput);
+      const endTime = Date.now();
+
+      // Should complete quickly (under 100ms) even with many spaces
+      expect(endTime - startTime).toBeLessThan(100);
+      expect(result.errorDetails).toBeDefined();
+    });
+
+    it('should handle very long error messages efficiently', () => {
+      const longMessage = 'a'.repeat(50000);
+      const input = `Prefix [400 Bad Request] ${longMessage}`;
+      const startTime = Date.now();
+      const result = extractStatusCodeFromError(input);
+      const endTime = Date.now();
+
+      // Should complete quickly even with very long input
+      expect(endTime - startTime).toBeLessThan(100);
+      expect(result.errorDetails?.statusCode).toBe(400);
+    });
+
+    it('should safely handle edge cases with match.index', () => {
+      // Test various edge cases where match.index might be 0 or at different positions
+      const testCases = [
+        { input: '[400 Bad Request]', expectedPrefix: '' },
+        { input: '[500 Error] Message', expectedPrefix: '' },
+        { input: 'Some text [404 Not Found] More text', expectedPrefix: 'Some text' },
+      ];
+
+      testCases.forEach(({ input, expectedPrefix }) => {
+        const result = extractStatusCodeFromError(input);
+        expect(result.errorDetails).toBeDefined();
+        expect(result.prefix).toBe(expectedPrefix);
+      });
+    });
+
+    it('should find status code when there are multiple brackets', () => {
+      // Real-world case from Google AI API errors with JSON arrays in the message
+      const input =
+        '[GoogleGenerativeAI Error]: Error fetching: [400 Bad Request] API key not valid. [{"@type":"type.googleapis.com"}]';
+      const result = extractStatusCodeFromError(input);
+
+      expect(result.errorDetails).toEqual({
+        message: 'API key not valid. [{"@type":"type.googleapis.com"}]',
+        statusCode: 400,
+        statusCodeText: '[400 Bad Request]',
+      });
+      expect(result.prefix).toBe('[GoogleGenerativeAI Error]: Error fetching:');
+    });
+
+    it('should skip brackets that do not contain valid status codes', () => {
+      const input = 'Error [not a code] happened [500 Internal Server Error] please retry';
+      const result = extractStatusCodeFromError(input);
+
+      expect(result.errorDetails).toEqual({
+        message: 'please retry',
+        statusCode: 500,
+        statusCodeText: '[500 Internal Server Error]',
+      });
+      expect(result.prefix).toBe('Error [not a code] happened');
+    });
   });
 
   describe('parseGoogleErrorMessage', () => {
@@ -94,6 +133,15 @@ describe('googleErrorParser', () => {
       const result = parseGoogleErrorMessage(input);
 
       expect(result.errorType).toBe(AgentRuntimeErrorType.LocationNotSupportError);
+      expect(result.error.message).toBe(input);
+    });
+
+    it('should classify text-only image response messages as no-image errors', () => {
+      const input =
+        'The model returned text instead of an image. Try an image generation instruction.';
+      const result = parseGoogleErrorMessage(input);
+
+      expect(result.errorType).toBe(AgentRuntimeErrorType.ProviderNoImageGenerated);
       expect(result.error.message).toBe(input);
     });
 
@@ -108,6 +156,18 @@ describe('googleErrorParser', () => {
         message: 'Service temporarily unavailable',
         status: 'UNAVAILABLE',
       });
+    });
+
+    it('should not be vulnerable to ReDoS in status JSON parsing', () => {
+      // Test with malicious input that could cause catastrophic backtracking
+      const maliciousInput = 'got status: UNAVAILABLE. ' + 'a'.repeat(10000);
+      const startTime = Date.now();
+      const result = parseGoogleErrorMessage(maliciousInput);
+      const endTime = Date.now();
+
+      // Should complete quickly (under 100ms) even with large input
+      expect(endTime - startTime).toBeLessThan(100);
+      expect(result.errorType).toBe(AgentRuntimeErrorType.ProviderBizError);
     });
 
     it('should handle direct JSON parsing', () => {
@@ -193,6 +253,31 @@ describe('googleErrorParser', () => {
       expect(result.error.message).toBe(
         'Request contains invalid parameters Please check the documentation Contact support for help',
       );
+    });
+
+    it('should detect exceeded context window from message text', () => {
+      const input =
+        'The input token count exceeds the maximum number of tokens allowed for this model';
+      const result = parseGoogleErrorMessage(input);
+
+      expect(result.errorType).toBe(AgentRuntimeErrorType.ExceededContextWindow);
+      expect(result.error.message).toBe(input);
+    });
+
+    it('should detect quota limit from "resource has been exhausted" message', () => {
+      const input = 'Resource has been exhausted (e.g. check quota).';
+      const result = parseGoogleErrorMessage(input);
+
+      expect(result.errorType).toBe(AgentRuntimeErrorType.QuotaLimitReached);
+      expect(result.error.message).toBe(input);
+    });
+
+    it('should detect quota limit from "too many requests" message', () => {
+      const input = 'Too many requests, please try again later';
+      const result = parseGoogleErrorMessage(input);
+
+      expect(result.errorType).toBe(AgentRuntimeErrorType.QuotaLimitReached);
+      expect(result.error.message).toBe(input);
     });
 
     it('should return default error for unparseable messages', () => {

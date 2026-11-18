@@ -1,6 +1,6 @@
+import { Flexbox } from '@lobehub/ui';
 import { memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Flexbox } from 'react-layout-kit';
 
 import { useDetailContext } from '../DetailProvider';
 import Block from './Block';
@@ -19,7 +19,7 @@ const Schema = memo(() => {
   const [resourcesMode, setResourcesMode] = useState<ModeType>(ModeType.Docs);
 
   return (
-    <Flexbox gap={64}>
+    <Flexbox gap={40}>
       <Block
         count={toolsCount || 0}
         desc={t('mcp.details.schema.tools.desc')}

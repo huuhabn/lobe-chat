@@ -1,4 +1,4 @@
-import { SearchQuery } from '@lobechat/types';
+import { type SearchQuery } from '@lobechat/types';
 
 import { toolsClient } from '@/libs/trpc/client';
 
@@ -15,8 +15,17 @@ class SearchService {
     return toolsClient.search.crawlPages.mutate(params);
   }
 
-  async webSearch(params: SearchQuery) {
-    return toolsClient.search.webSearch.query(params);
+  async webSearch(params: SearchQuery, options?: { signal?: AbortSignal }) {
+    return toolsClient.search.webSearch.query(params, { signal: options?.signal });
+  }
+
+  /**
+   * Server-enabled search providers / crawler impls in the server default
+   * priority order. Used by the Web Search settings page to render the
+   * channel-ordering picker.
+   */
+  async getAvailableChannels() {
+    return toolsClient.search.getAvailableChannels.query();
   }
 }
 

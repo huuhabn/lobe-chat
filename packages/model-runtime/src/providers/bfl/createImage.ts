@@ -1,20 +1,15 @@
 import createDebug from 'debug';
-import { RuntimeImageGenParamsValue } from 'model-bank';
+import type { RuntimeImageGenParamsValue } from 'model-bank';
 
 import { AgentRuntimeErrorType } from '../../types/error';
-import { CreateImagePayload, CreateImageResponse } from '../../types/image';
-import { type TaskResult, asyncifyPolling } from '../../utils/asyncifyPolling';
+import type { CreateImagePayload, CreateImageResponse } from '../../types/image';
+import type { TaskResult } from '../../utils/asyncifyPolling';
+import { asyncifyPolling } from '../../utils/asyncifyPolling';
 import { AgentRuntimeError } from '../../utils/createError';
-import { imageUrlToBase64 } from '../../utils/imageToBase64';
+import { referenceImageUrlToBase64 } from '../../utils/referenceImageCache';
 import { parseDataUri } from '../../utils/uriParser';
-import {
-  BFL_ENDPOINTS,
-  BflAsyncResponse,
-  BflModelId,
-  BflRequest,
-  BflResultResponse,
-  BflStatusResponse,
-} from './types';
+import type { BflAsyncResponse, BflModelId, BflRequest, BflResultResponse } from './types';
+import { BFL_ENDPOINTS, BflStatusResponse } from './types';
 
 const log = createDebug('lobe-image:bfl');
 
@@ -44,7 +39,7 @@ async function convertImageToBase64(imageUrl: string): Promise<string> {
 
     if (type === 'url') {
       // Convert URL to base64
-      const { base64 } = await imageUrlToBase64(imageUrl);
+      const { base64 } = await referenceImageUrlToBase64(imageUrl);
       return base64;
     }
 

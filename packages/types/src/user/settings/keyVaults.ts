@@ -19,6 +19,7 @@ export interface AzureOpenAIKeyVault {
 
 export interface AWSBedrockKeyVault {
   accessKeyId?: string;
+  apiKey?: string;
   region?: string;
   secretAccessKey?: string;
   sessionToken?: string;
@@ -34,6 +35,63 @@ export interface CloudflareKeyVault {
   baseURLOrAccountID?: string;
 }
 
+/**
+ * Doubao Speech (Volcengine speech synthesis): an API key from the new speech console, or
+ * the legacy console's App ID + Access Token.
+ */
+export interface DoubaoSpeechKeyVault {
+  /** Legacy console Access Token, sent as `X-Api-Access-Key` with `appId`. */
+  accessToken?: string;
+  /** New-console API key, sent as `X-Api-Key`. */
+  apiKey?: string;
+  /** Legacy console App ID, sent as `X-Api-App-Id` with `accessToken`. */
+  appId?: string;
+  baseURL?: string;
+}
+
+export interface ComfyUIKeyVault {
+  apiKey?: string;
+  authType?: 'none' | 'basic' | 'bearer' | 'custom';
+  baseURL?: string;
+  customHeaders?: Record<string, string>;
+  password?: string;
+  username?: string;
+}
+
+export interface GithubCopilotKeyVault {
+  /**
+   * Traditional PAT (Personal Access Token)
+   */
+  apiKey?: string;
+  /**
+   * Provider-specific bearer token (Copilot API token)
+   */
+  bearerToken?: string;
+  /**
+   * Bearer token expiration timestamp (ms)
+   */
+  bearerTokenExpiresAt?: string;
+  /**
+   * OAuth access token (e.g., GitHub's ghu_xxx)
+   */
+  oauthAccessToken?: string;
+}
+
+export interface SuperGrokKeyVault {
+  /**
+   * xAI OAuth access token (JWT, ~1h lifetime)
+   */
+  oauthAccessToken?: string;
+  /**
+   * xAI OAuth refresh token. Rotates on every refresh — single use.
+   */
+  oauthRefreshToken?: string;
+  /**
+   * Access token expiration timestamp (ms)
+   */
+  oauthTokenExpiresAt?: string;
+}
+
 export interface SearchEngineKeyVaults {
   searchxng?: {
     apiKey?: string;
@@ -42,71 +100,5 @@ export interface SearchEngineKeyVaults {
 }
 
 export interface UserKeyVaults extends SearchEngineKeyVaults {
-  ai21?: OpenAICompatibleKeyVault;
-  ai302?: OpenAICompatibleKeyVault;
-  ai360?: OpenAICompatibleKeyVault;
-  aihubmix?: OpenAICompatibleKeyVault;
-  akashchat?: OpenAICompatibleKeyVault;
-  anthropic?: OpenAICompatibleKeyVault;
-  azure?: AzureOpenAIKeyVault;
-  azureai?: AzureOpenAIKeyVault;
-  baichuan?: OpenAICompatibleKeyVault;
-  bedrock?: AWSBedrockKeyVault;
-  bfl?: any;
-  cerebras?: OpenAICompatibleKeyVault;
-  cloudflare?: CloudflareKeyVault;
-  cohere?: OpenAICompatibleKeyVault;
-  cometapi?: OpenAICompatibleKeyVault;
-  deepseek?: OpenAICompatibleKeyVault;
-  fal?: FalKeyVault;
-  fireworksai?: OpenAICompatibleKeyVault;
-  giteeai?: OpenAICompatibleKeyVault;
-  github?: OpenAICompatibleKeyVault;
-  google?: OpenAICompatibleKeyVault;
-  groq?: OpenAICompatibleKeyVault;
-  higress?: OpenAICompatibleKeyVault;
-  huggingface?: OpenAICompatibleKeyVault;
-  hunyuan?: OpenAICompatibleKeyVault;
-  infiniai?: OpenAICompatibleKeyVault;
-  internlm?: OpenAICompatibleKeyVault;
-  jina?: OpenAICompatibleKeyVault;
-  lmstudio?: OpenAICompatibleKeyVault;
-  lobehub?: any;
-  minimax?: OpenAICompatibleKeyVault;
-  mistral?: OpenAICompatibleKeyVault;
-  modelscope?: OpenAICompatibleKeyVault;
-  moonshot?: OpenAICompatibleKeyVault;
-  nebius?: OpenAICompatibleKeyVault;
-  newapi?: OpenAICompatibleKeyVault;
-  novita?: OpenAICompatibleKeyVault;
-  nvidia?: OpenAICompatibleKeyVault;
-  ollama?: OpenAICompatibleKeyVault;
-  ollamacloud?: OpenAICompatibleKeyVault;
-  openai?: OpenAICompatibleKeyVault;
-  openrouter?: OpenAICompatibleKeyVault;
-  password?: string;
-  perplexity?: OpenAICompatibleKeyVault;
-  ppio?: OpenAICompatibleKeyVault;
-  qiniu?: OpenAICompatibleKeyVault;
-  qwen?: OpenAICompatibleKeyVault;
-  sambanova?: OpenAICompatibleKeyVault;
   search1api?: OpenAICompatibleKeyVault;
-  sensenova?: OpenAICompatibleKeyVault;
-  siliconcloud?: OpenAICompatibleKeyVault;
-  spark?: OpenAICompatibleKeyVault;
-  stepfun?: OpenAICompatibleKeyVault;
-  taichu?: OpenAICompatibleKeyVault;
-  tencentcloud?: OpenAICompatibleKeyVault;
-  togetherai?: OpenAICompatibleKeyVault;
-  upstage?: OpenAICompatibleKeyVault;
-  v0?: OpenAICompatibleKeyVault;
-  vercelaigateway?: OpenAICompatibleKeyVault;
-  vertexai?: VertexAIKeyVault;
-  vllm?: OpenAICompatibleKeyVault;
-  volcengine?: OpenAICompatibleKeyVault;
-  wenxin?: OpenAICompatibleKeyVault;
-  xai?: OpenAICompatibleKeyVault;
-  xinference?: OpenAICompatibleKeyVault;
-  zeroone?: OpenAICompatibleKeyVault;
-  zhipu?: OpenAICompatibleKeyVault;
 }

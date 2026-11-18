@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { Mock, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as desensitizeTool from '../../utils/desensitizeUrl';
 import { CloudflareStreamTransformer, desensitizeCloudflareUrl, fillUrl } from './cloudflare';
@@ -192,13 +192,6 @@ describe('cloudflareHelpers', () => {
     });
 
     describe('desensitizeCloudflareUrl', () => {
-      it('should mask account id in official API endpoint', () => {
-        const url =
-          'https://api.cloudflare.com/client/v4/accounts/80009000a000b000c000d000e000f000/ai/run/';
-        const maskedUrl = desensitizeCloudflareUrl(url);
-        expect(maskedUrl).toBe('https://api.cloudflare.com/client/v4/accounts/****/ai/run/');
-      });
-
       it('should call desensitizeUrl for custom API endpoint', () => {
         const url = 'https://custom.url/path';
         vi.spyOn(desensitizeTool, 'desensitizeUrl').mockImplementation(

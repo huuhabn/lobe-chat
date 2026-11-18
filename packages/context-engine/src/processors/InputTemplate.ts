@@ -1,8 +1,14 @@
 import debug from 'debug';
-import { template } from 'lodash-es';
+import { template } from 'es-toolkit/compat';
 
 import { BaseProcessor } from '../base/BaseProcessor';
 import type { PipelineContext, ProcessorOptions } from '../types';
+
+declare module '../types' {
+  interface PipelineContextMetadataOverrides {
+    inputTemplateProcessed?: number;
+  }
+}
 
 const log = debug('context-engine:processor:InputTemplateProcessor');
 
@@ -39,7 +45,7 @@ export class InputTemplateProcessor extends BaseProcessor {
     try {
       // Compile the template
       const compiler = template(this.config.inputTemplate, {
-        interpolate: /{{\s*(text)\s*}}/g,
+        interpolate: /\{\{\s*(text)\s*\}\}/g,
       });
 
       log(`Applying input template: ${this.config.inputTemplate}`);
@@ -48,8 +54,9 @@ export class InputTemplateProcessor extends BaseProcessor {
       for (let i = 0; i < clonedContext.messages.length; i++) {
         const message = clonedContext.messages[i];
 
-        // Only apply template to user messages
-        if (message.role === 'user') {
+        // Only apply template to what the human typed — not to a background
+        // sub-agent's report, which arrives as a user message from that sub-agent
+        if (message.role === 'user' && !message.metadata?.subAgentCallback) {
           try {
             const originalContent = message.content;
             const processedContent = compiler({ text: originalContent });

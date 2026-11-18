@@ -1,13 +1,29 @@
-import { Block } from '@lobehub/ui';
-import { Popover, Progress } from 'antd';
-import { createStyles } from 'antd-style';
+import { Block, Center, createStaticStyles, cssVar, Flexbox, Popover, Progress } from '@lobehub/ui';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Center, Flexbox } from 'react-layout-kit';
 
-import { ScoreResult, getGradeColor, sortItemsByPriority } from '../../MCP/calculateScore';
+import { type ScoreResult } from '../../MCP/calculateScore';
+import { sortItemsByPriority } from '../../MCP/calculateScore';
 
-const useStyles = createStyles(({ css, token }) => ({
+// Version of getGradeColor using cssVar
+const getGradeColor = (grade: string): string => {
+  switch (grade) {
+    case 'a': {
+      return cssVar.colorSuccess;
+    }
+    case 'b': {
+      return cssVar.colorWarning;
+    }
+    case 'f': {
+      return cssVar.colorError;
+    }
+    default: {
+      return cssVar.colorTextSecondary;
+    }
+  }
+};
+
+const styles = createStaticStyles(({ css }) => ({
   colorDot: css`
     width: 8px;
     height: 8px;
@@ -15,14 +31,14 @@ const useStyles = createStyles(({ css, token }) => ({
   `,
   container: css`
     padding: 24px;
-    border: 1px solid ${token.colorBorderSecondary};
+    border: 1px solid ${cssVar.colorBorderSecondary};
     border-radius: 12px;
-    background: ${token.colorFillQuaternary};
+    background: ${cssVar.colorFillQuaternary};
   `,
   description: css`
     margin-block-start: 8px;
     font-size: 14px;
-    color: ${token.colorTextSecondary};
+    color: ${cssVar.colorTextSecondary};
   `,
   gradeBadge: css`
     flex: none;
@@ -68,17 +84,17 @@ const useStyles = createStyles(({ css, token }) => ({
   scoreText: css`
     font-size: 24px;
     font-weight: 600;
-    color: ${token.colorText};
+    color: ${cssVar.colorText};
   `,
   sectionTitle: css`
     margin-block: 12px 6px;
     margin-inline: 0;
     padding-block-start: 8px;
-    border-block-start: 1px solid ${token.colorBorderSecondary};
+    border-block-start: 1px solid ${cssVar.colorBorderSecondary};
 
     font-size: 14px;
     font-weight: 600;
-    color: ${token.colorText};
+    color: ${cssVar.colorText};
 
     &:first-of-type {
       padding-block-start: 0;
@@ -105,21 +121,20 @@ interface TotalScoreProps {
 }
 
 const TotalScore = memo<TotalScoreProps>(({ scoreResult, scoreItems = [], isValidated }) => {
-  const { styles, theme } = useStyles();
   const { t } = useTranslation('discover');
 
   const { totalScore, maxScore, percentage, grade } = scoreResult;
 
-  // 使用主题颜色的段级颜色配置
+  // Segment-level color configuration using theme colors
   const SEGMENT_COLORS = {
-    // 绿色 (80-100%)
-    A_COLOR: theme.colorSuccess,
+    // Green (80-100%)
+    A_COLOR: cssVar.colorSuccess,
 
-    // 黄色 (60-85%)
-    B_COLOR: theme.colorWarning,
+    // Yellow (60-85%)
+    B_COLOR: cssVar.colorWarning,
 
-    // 红色 (0-60%)
-    F_COLOR: theme.colorError,
+    // Red (0-60%)
+    F_COLOR: cssVar.colorError,
   };
 
   const allItems = sortItemsByPriority([...scoreItems]);
@@ -128,11 +143,11 @@ const TotalScore = memo<TotalScoreProps>(({ scoreResult, scoreItems = [], isVali
   const completedOptional = allItems.filter((item) => !item.required && item.check);
   const incompleteOptional = allItems.filter((item) => !item.required && !item.check);
 
-  // 计算必需项个数
+  // Count the number of required items
   const totalRequiredItems = completedRequired.length + incompleteRequired.length;
   const completedRequiredItems = completedRequired.length;
 
-  // 生成 tooltip 内容
+  // Generate tooltip content
   const renderTooltipContent = () => (
     <div className={styles.tooltipContent}>
       <div style={{ fontSize: '14px', marginBottom: '12px' }}>
@@ -144,7 +159,7 @@ const TotalScore = memo<TotalScoreProps>(({ scoreResult, scoreItems = [], isVali
 
       {completedRequired.length > 0 && (
         <>
-          <div className={styles.sectionTitle} style={{ color: getGradeColor(grade, theme) }}>
+          <div className={styles.sectionTitle} style={{ color: getGradeColor(grade) }}>
             {t('mcp.details.totalScore.popover.completedRequired', {
               count: completedRequired.length,
             })}
@@ -160,7 +175,7 @@ const TotalScore = memo<TotalScoreProps>(({ scoreResult, scoreItems = [], isVali
 
       {incompleteRequired.length > 0 && (
         <>
-          <div className={styles.sectionTitle} style={{ color: theme.colorError }}>
+          <div className={styles.sectionTitle} style={{ color: cssVar.colorError }}>
             {t('mcp.details.totalScore.popover.incompleteRequired', {
               count: incompleteRequired.length,
             })}
@@ -176,7 +191,7 @@ const TotalScore = memo<TotalScoreProps>(({ scoreResult, scoreItems = [], isVali
 
       {completedOptional.length > 0 && (
         <>
-          <div className={styles.sectionTitle} style={{ color: getGradeColor(grade, theme) }}>
+          <div className={styles.sectionTitle} style={{ color: getGradeColor(grade) }}>
             {t('mcp.details.totalScore.popover.completedOptional', {
               count: completedOptional.length,
             })}
@@ -192,7 +207,7 @@ const TotalScore = memo<TotalScoreProps>(({ scoreResult, scoreItems = [], isVali
 
       {incompleteOptional.length > 0 && (
         <>
-          <div className={styles.sectionTitle} style={{ color: theme.colorTextSecondary }}>
+          <div className={styles.sectionTitle} style={{ color: cssVar.colorTextSecondary }}>
             {t('mcp.details.totalScore.popover.incompleteOptional', {
               count: incompleteOptional.length,
             })}
@@ -210,7 +225,7 @@ const TotalScore = memo<TotalScoreProps>(({ scoreResult, scoreItems = [], isVali
 
   return (
     <Block gap={12} padding={16} variant={'outlined'}>
-      <Flexbox align="flex-start" horizontal justify="space-between">
+      <Flexbox horizontal align="flex-start" justify="space-between">
         <Flexbox>
           <h2 style={{ fontWeight: 'bold', margin: 0 }}>
             {t(`mcp.details.scoreLevel.${grade}.fullTitle`)}
@@ -221,8 +236,8 @@ const TotalScore = memo<TotalScoreProps>(({ scoreResult, scoreItems = [], isVali
           <Center
             className={styles.gradeBadge}
             style={{
-              borderColor: getGradeColor(grade, theme),
-              color: getGradeColor(grade, theme),
+              borderColor: getGradeColor(grade),
+              color: getGradeColor(grade),
             }}
           >
             {grade.toUpperCase()}
@@ -232,23 +247,22 @@ const TotalScore = memo<TotalScoreProps>(({ scoreResult, scoreItems = [], isVali
 
       <div className={styles.progressContainer}>
         <Popover
-          arrow={false}
-          content={renderTooltipContent()}
           placement="bottom"
-          title={t('mcp.details.totalScore.popover.title')}
           trigger={['hover', 'click']}
+          content={
+            <div>
+              <div style={{ fontWeight: 'bold', marginBottom: 8 }}>
+                {t('mcp.details.totalScore.popover.title')}
+              </div>
+              {renderTooltipContent()}
+            </div>
+          }
         >
           <Progress
             percent={Math.round(percentage)}
             showInfo={false}
-            size={{
-              height: 8,
-            }}
-            strokeColor={{
-              '0%': SEGMENT_COLORS.F_COLOR,
-              '60%': SEGMENT_COLORS.B_COLOR,
-              '80%': SEGMENT_COLORS.A_COLOR,
-            }}
+            size={8}
+            strokeColor={getGradeColor(grade)}
           />
         </Popover>
 
@@ -274,10 +288,10 @@ const TotalScore = memo<TotalScoreProps>(({ scoreResult, scoreItems = [], isVali
         <span style={{ fontSize: '16px', fontWeight: 600 }}>
           {totalScore}/{maxScore} {t('mcp.details.totalScore.scoreInfo.points')}
         </span>
-        <span style={{ color: getGradeColor(grade, theme), fontWeight: 600 }}>
+        <span style={{ color: getGradeColor(grade), fontWeight: 600 }}>
           {Math.round(percentage)}%
         </span>
-        <span style={{ color: getGradeColor(grade, theme), fontSize: '14px' }}>
+        <span style={{ color: getGradeColor(grade), fontSize: '14px' }}>
           {t('mcp.details.totalScore.scoreInfo.requiredItems')}: {completedRequiredItems}/
           {totalRequiredItems} {t('mcp.details.totalScore.scoreInfo.items')}
         </span>

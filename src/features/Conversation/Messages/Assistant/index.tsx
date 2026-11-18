@@ -1,282 +1,234 @@
 'use client';
 
-import { ChatMessage } from '@lobechat/types';
-import { Tag } from '@lobehub/ui';
-import { useResponsive } from 'antd-style';
-import { ReactNode, memo, useCallback, useMemo } from 'react';
-import { useTranslation } from 'react-i18next';
-import { Flexbox } from 'react-layout-kit';
+import { LOADING_FLAT } from '@lobechat/const';
+import type { EmojiReaction } from '@lobechat/types';
+import isEqual from 'fast-deep-equal';
+import type { MouseEventHandler, ReactNode } from 'react';
+import { memo, useCallback, useMemo } from 'react';
 
-import { HtmlPreviewAction } from '@/components/HtmlPreview';
-import { LOADING_FLAT } from '@/const/message';
-import Avatar from '@/features/ChatItem/components/Avatar';
-import BorderSpacing from '@/features/ChatItem/components/BorderSpacing';
-import ErrorContent from '@/features/ChatItem/components/ErrorContent';
-import MessageContent from '@/features/ChatItem/components/MessageContent';
-import Title from '@/features/ChatItem/components/Title';
-import { useStyles } from '@/features/ChatItem/style';
-import { useOpenChatSettings } from '@/hooks/useInterceptingRoutes';
-import { useAgentStore } from '@/store/agent';
-import { agentChatConfigSelectors } from '@/store/agent/slices/chat';
-import { useChatStore } from '@/store/chat';
-import { chatSelectors } from '@/store/chat/selectors';
-import { chatGroupSelectors, useChatGroupStore } from '@/store/chatGroup';
-import { useGlobalStore } from '@/store/global';
-import { useSessionStore } from '@/store/session';
-import { sessionSelectors } from '@/store/session/selectors';
+import AssistantMessageNotice from '@/business/client/components/AssistantMessageNotice';
+import { MESSAGE_ACTION_BAR_PORTAL_ATTRIBUTES } from '@/const/messageActionPortal';
+import { ChatItem } from '@/features/Conversation/ChatItem';
+import { useMessageCommentCount } from '@/features/TopicComment/hooks';
+import MessageCommentBadge from '@/features/TopicComment/MessageCommentBadge';
 import { useUserStore } from '@/store/user';
 import { userGeneralSettingsSelectors, userProfileSelectors } from '@/store/user/selectors';
 
+import { ReactionDisplay } from '../../components/Reaction';
 import ErrorMessageExtra, { useErrorContent } from '../../Error';
-import { markdownElements } from '../../MarkdownElements';
-import { useDoubleClickEdit } from '../../hooks/useDoubleClickEdit';
-import { normalizeThinkTags, processWithArtifact } from '../../utils';
-import { AssistantActionsBar } from './Actions';
+import { useAgentMeta, useDoubleClickEdit } from '../../hooks';
+import { dataSelectors, messageStateSelectors, useConversationStore } from '../../store';
+import { normalizeThinkTags, processWithArtifact } from '../../utils/markdown';
+import MessageBranch from '../components/MessageBranch';
+import RefreshingIndicator from '../components/RefreshingIndicator';
+import {
+  useSetMessageItemActionElementPortialContext,
+  useSetMessageItemActionTypeContext,
+} from '../Contexts/message-action-context';
+import MessageWorks from '../MessageWorks';
+import DirectMentionProgress, { DirectMentionStatus } from './components/DirectMentionProgress';
+import InterruptedHint from './components/InterruptedHint';
+import MessageContent from './components/MessageContent';
+import ThreadExecutionSummary from './components/ThreadExecutionSummary';
 import { AssistantMessageExtra } from './Extra';
-import { AssistantMessageContent } from './MessageContent';
 
-const rehypePlugins = markdownElements.map((element) => element.rehypePlugin).filter(Boolean);
-const remarkPlugins = markdownElements.map((element) => element.remarkPlugin).filter(Boolean);
+const actionBarHolder = (
+  <div {...{ [MESSAGE_ACTION_BAR_PORTAL_ATTRIBUTES.assistant]: '' }} style={{ height: '28px' }} />
+);
 
-const isHtmlCode = (content: string, language: string) => {
-  return (
-    language === 'html' ||
-    (language === '' && content.includes('<html>')) ||
-    (language === '' && content.includes('<!DOCTYPE html>'))
-  );
-};
-const MOBILE_AVATAR_SIZE = 32;
-
-interface AssistantMessageProps extends ChatMessage {
+interface AssistantMessageProps {
   disableEditing?: boolean;
+  footerRender?: ReactNode;
+  id: string;
   index: number;
-  showTitle?: boolean;
+  isLatestItem?: boolean;
 }
-const AssistantMessage = memo<AssistantMessageProps>((props) => {
-  const {
-    error,
-    showTitle,
-    id,
-    role,
-    search,
-    disableEditing,
-    index,
-    content,
-    createdAt,
-    tools,
-    extra,
-    metadata,
-    meta,
-    targetId,
-  } = props;
-  const avatar = meta;
-  const { t } = useTranslation('chat');
-  const { mobile } = useResponsive();
-  const placement = 'left';
-  const type = useAgentStore(agentChatConfigSelectors.displayMode);
-  const variant = type === 'chat' ? 'bubble' : 'docs';
 
-  const { transitionMode, highlighterTheme, mermaidTheme } = useUserStore(
-    userGeneralSettingsSelectors.config,
-  );
+const AssistantMessage = memo<AssistantMessageProps>(
+  ({ id, index, disableEditing, footerRender }) => {
+    // Get message and actionsConfig from ConversationStore
+    const item = useConversationStore(dataSelectors.getDisplayMessageById(id), isEqual)!;
 
-  const [generating, isInRAGFlow, editing] = useChatStore((s) => [
-    chatSelectors.isMessageGenerating(id)(s),
-    chatSelectors.isMessageInRAGFlow(id)(s),
-    chatSelectors.isMessageEditing(id)(s),
-  ]);
+    const {
+      agentId,
+      branch,
+      error,
+      role,
+      content,
+      createdAt,
+      tools,
+      extra,
+      model,
+      provider,
+      performance,
+      usage,
+      metadata,
+      taskDetail,
+    } = item;
 
-  const { styles } = useStyles({
-    editing,
-    placement,
-    primary: false,
-    showTitle,
-    time: createdAt,
-    title: avatar.title,
-    variant,
-  });
-  const errorContent = useErrorContent(error);
+    const avatar = useAgentMeta(agentId);
 
-  // remove line breaks in artifact tag to make the ast transform easier
-  const message = !editing ? normalizeThinkTags(processWithArtifact(content)) : content;
+    // Get editing, generating, creating, and interrupted state from ConversationStore
+    const editing = useConversationStore(messageStateSelectors.isMessageEditing(id));
+    const generating = useConversationStore(messageStateSelectors.isMessageGenerating(id));
+    const isCreating = useConversationStore(messageStateSelectors.isMessageCreating(id));
+    const interrupted = useConversationStore(messageStateSelectors.isMessageInterrupted(id));
+    const addReaction = useConversationStore((s) => s.addReaction);
+    const removeReaction = useConversationStore((s) => s.removeReaction);
+    const userId = useUserStore(userProfileSelectors.userId)!;
+    const reactions = useMemo<EmojiReaction[]>(
+      () => metadata?.reactions || [],
+      [metadata?.reactions],
+    );
 
-  // when the message is in RAG flow or the AI generating, it should be in loading state
-  const loading = isInRAGFlow || generating;
-
-  const animated = transitionMode === 'fadeIn' && generating;
-
-  const isGroupSession = useSessionStore(sessionSelectors.isCurrentSessionGroupSession);
-  const currentSession = useSessionStore(sessionSelectors.currentSession);
-  const sessionId = isGroupSession && currentSession ? currentSession.id : '';
-  const groupConfig = useChatGroupStore(chatGroupSelectors.getGroupConfig(sessionId || ''));
-
-  const reducted =
-    isGroupSession && targetId !== null && targetId !== 'user' && !groupConfig?.revealDM;
-
-  // Get target name for DM indicator
-  const userName = useUserStore(userProfileSelectors.nickName) || 'User';
-  const agents = useSessionStore(sessionSelectors.currentGroupAgents);
-
-  const dmIndicator = useMemo(() => {
-    if (!targetId) return undefined;
-
-    let targetName = targetId;
-    if (targetId === 'user') {
-      targetName = t('dm.you');
-    } else {
-      const targetAgent = agents?.find((agent) => agent.id === targetId);
-      targetName = targetAgent?.title || targetId;
-    }
-
-    return <Tag>{t('dm.visibleTo', { target: targetName })}</Tag>;
-  }, [targetId, userName, agents, t]);
-
-  // ======================= Performance Optimization ======================= //
-  // these useMemo/useCallback are all for the performance optimization
-  // maybe we can remove it in React 19
-  // ======================================================================== //
-
-  const components = useMemo(
-    () =>
-      Object.fromEntries(
-        markdownElements.map((element) => {
-          const Component = element.Component;
-
-          return [element.tag, (props: any) => <Component {...props} id={id} />];
-        }),
-      ),
-    [id],
-  );
-
-  const markdownProps = useMemo(
-    () => ({
-      animated,
-      citations: search?.citations,
-      componentProps: {
-        highlight: {
-          actionsRender: ({ content, actionIconSize, language, originalNode }: any) => {
-            const showHtmlPreview = isHtmlCode(content, language);
-
-            return (
-              <>
-                {showHtmlPreview && <HtmlPreviewAction content={content} size={actionIconSize} />}
-                {originalNode}
-              </>
-            );
-          },
-          theme: highlighterTheme,
-        },
-        mermaid: { theme: mermaidTheme },
+    const handleReactionClick = useCallback(
+      (emoji: string) => {
+        const existing = reactions.find((reaction) => reaction.emoji === emoji);
+        if (existing?.users.includes(userId)) {
+          removeReaction(id, emoji);
+        } else {
+          addReaction(id, emoji);
+        }
       },
-      components,
-      enableCustomFootnotes: true,
-      rehypePlugins,
-      remarkPlugins,
-      showFootnotes:
-        search?.citations &&
-        // if the citations are all empty, we should not show the citations
-        search?.citations.length > 0 &&
-        // if the citations's url and title are all the same, we should not show the citations
-        search?.citations.every((item) => item.title !== item.url),
-    }),
-    [animated, components, role, search, highlighterTheme, mermaidTheme],
-  );
+      [addReaction, id, reactions, removeReaction, userId],
+    );
 
-  const [isInbox] = useSessionStore((s) => [sessionSelectors.isInboxSession(s)]);
-  const [toggleSystemRole] = useGlobalStore((s) => [s.toggleSystemRole]);
-  const openChatSettings = useOpenChatSettings();
+    const isReactionActive = useCallback(
+      (emoji: string) => {
+        const reaction = reactions.find((item) => item.emoji === emoji);
+        return !!reaction && reaction.users.includes(userId);
+      },
+      [reactions, userId],
+    );
 
-  const onAvatarClick = useCallback(() => {
-    if (!isInbox) {
-      toggleSystemRole(true);
-    } else {
-      openChatSettings();
-    }
-  }, [isInbox]);
+    const errorContent = useErrorContent(error);
 
-  const onDoubleClick = useDoubleClickEdit({ disableEditing, error, id, index, role });
+    // remove line breaks in artifact tag to make the ast transform easier
+    const message = !editing ? normalizeThinkTags(processWithArtifact(content)) : content;
 
-  const renderMessage = useCallback(
-    (editableContent: ReactNode) => (
-      <AssistantMessageContent {...props} editableContent={editableContent} />
-    ),
-    [props],
-  );
-  const errorMessage = <ErrorMessageExtra data={props} />;
-  return (
-    <Flexbox
-      className={styles.container}
-      direction={placement === 'left' ? 'horizontal' : 'horizontal-reverse'}
-      gap={mobile ? 6 : 12}
-    >
-      <Avatar
-        alt={avatar.title || 'avatar'}
+    const onDoubleClick = useDoubleClickEdit({ disableEditing, error, id, role });
+    const setMessageItemActionElementPortialContext =
+      useSetMessageItemActionElementPortialContext();
+    const setMessageItemActionTypeContext = useSetMessageItemActionTypeContext();
+
+    const isDevMode = useUserStore((s) => userGeneralSettingsSelectors.config(s).isDevMode);
+    const { count: commentCount, topicId: commentTopicId } = useMessageCommentCount(id);
+
+    const onMouseEnter: MouseEventHandler<HTMLDivElement> = useCallback(
+      (e) => {
+        setMessageItemActionElementPortialContext(e.currentTarget);
+        setMessageItemActionTypeContext({ id, index, type: 'assistant' });
+      },
+      [id, index, setMessageItemActionElementPortialContext, setMessageItemActionTypeContext],
+    );
+
+    // A direct @Agent reply still being written in its thread: show its live
+    // progress instead of an empty bubble until the answer lands here.
+    const processing = useConversationStore(messageStateSelectors.isMessageProcessing(id));
+    const runningThreadId =
+      processing && agentId && taskDetail?.threadId && (!content || content === LOADING_FLAT)
+        ? taskDetail.threadId
+        : undefined;
+
+    const hasEmptyErrorMessage = Boolean(
+      errorContent &&
+      error &&
+      (message === LOADING_FLAT || !message || String(message).trim() === ''),
+    );
+
+    return (
+      <ChatItem
+        showTitle
+        aboveMessage={runningThreadId ? undefined : <ThreadExecutionSummary messageId={id} />}
+        // ChatItem renders this as the primary block when the message is empty,
+        // or inside messageExtra (below the content) when the turn streamed
+        // content before erroring — so don't gate it on empty content.
+        agentId={agentId ?? null}
         avatar={avatar}
-        loading={loading}
-        onClick={onAvatarClick}
-        placement={placement}
-        size={mobile ? MOBILE_AVATAR_SIZE : undefined}
-        style={{ marginTop: 6 }}
-      />
-      <Flexbox align={'flex-start'} className={styles.messageContainer}>
-        <Title
-          avatar={avatar}
-          placement={placement}
-          showTitle={showTitle}
-          time={createdAt}
-          titleAddon={dmIndicator}
-        />
-        <Flexbox
-          align={'flex-start'}
-          className={styles.messageContent}
-          data-layout={'vertical'} // 添加数据属性以方便样式选择
-          direction={'vertical'}
-          gap={8}
-        >
-          <Flexbox style={{ flex: 1, maxWidth: '100%' }}>
-            {error && (message === LOADING_FLAT || !message) ? (
-              <ErrorContent error={errorContent} message={errorMessage} placement={placement} />
-            ) : (
-              <MessageContent
-                editing={editing}
-                id={id}
-                markdownProps={markdownProps}
-                message={reducted ? `*${t('hideForYou')}*` : message}
-                messageExtra={
-                  <>
-                    {errorContent && (
-                      <ErrorContent
-                        error={errorContent}
-                        message={errorMessage}
-                        placement={placement}
-                      />
-                    )}
-                    <AssistantMessageExtra
-                      content={content}
-                      extra={extra}
-                      id={id}
-                      metadata={metadata}
-                      tools={tools}
-                    />
-                  </>
-                }
-                onDoubleClick={onDoubleClick}
-                placement={placement}
-                renderMessage={renderMessage}
-                variant={variant}
+        belowMessage={hasEmptyErrorMessage ? footerRender : undefined}
+        customErrorRender={(error) => <ErrorMessageExtra data={item} error={error} />}
+        editing={editing}
+        error={errorContent && error ? errorContent : undefined}
+        id={id}
+        loading={generating || isCreating || !!runningThreadId}
+        message={message}
+        placement={'left'}
+        time={runningThreadId ? undefined : createdAt}
+        actionAddon={
+          reactions.length > 0 || (commentCount > 0 && commentTopicId) ? (
+            <>
+              {reactions.length > 0 && (
+                <ReactionDisplay
+                  isActive={isReactionActive}
+                  reactions={reactions}
+                  onReactionClick={handleReactionClick}
+                />
+              )}
+              {commentCount > 0 && commentTopicId && (
+                <MessageCommentBadge count={commentCount} messageId={id} topicId={commentTopicId} />
+              )}
+            </>
+          ) : undefined
+        }
+        actions={
+          <>
+            {isDevMode && branch && (
+              <MessageBranch
+                activeBranchIndex={branch.activeBranchIndex}
+                count={branch.count}
+                messageId={id}
               />
             )}
-          </Flexbox>
-          {!disableEditing && !editing && (
-            <Flexbox align={'flex-start'} className={styles.actions} role="menubar">
-              <AssistantActionsBar data={props} id={id} index={index} />
-            </Flexbox>
-          )}
-        </Flexbox>
-      </Flexbox>
-      {mobile && <BorderSpacing borderSpacing={MOBILE_AVATAR_SIZE} />}
-    </Flexbox>
-  );
-});
+            {!disableEditing && actionBarHolder}
+          </>
+        }
+        afterActions={
+          metadata?.work?.rootOperationId ? (
+            <MessageWorks rootOperationId={metadata.work.rootOperationId} />
+          ) : undefined
+        }
+        messageExtra={
+          <>
+            {interrupted && <InterruptedHint />}
+            <AssistantMessageNotice finishType={metadata?.finishType} />
+            <AssistantMessageExtra
+              content={content}
+              extra={extra}
+              id={id}
+              model={model!}
+              performance={performance! || metadata}
+              provider={provider!}
+              tools={tools}
+              usage={usage! || metadata}
+            />
+            {footerRender}
+          </>
+        }
+        titleAddon={
+          runningThreadId ? (
+            <DirectMentionStatus
+              startedAt={
+                taskDetail?.startedAt ? Date.parse(taskDetail.startedAt) : Number(createdAt)
+              }
+            />
+          ) : (
+            <RefreshingIndicator messageId={id} />
+          )
+        }
+        onDoubleClick={onDoubleClick}
+        onMouseEnter={onMouseEnter}
+      >
+        {runningThreadId ? (
+          <DirectMentionProgress agentId={agentId!} messageId={id} threadId={runningThreadId} />
+        ) : (
+          <MessageContent {...item} />
+        )}
+      </ChatItem>
+    );
+  },
+  isEqual,
+);
+
+AssistantMessage.displayName = 'AssistantMessage';
 
 export default AssistantMessage;

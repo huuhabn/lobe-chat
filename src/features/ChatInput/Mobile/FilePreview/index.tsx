@@ -1,36 +1,31 @@
-import { PreviewGroup, ScrollShadow } from '@lobehub/ui';
-import { createStyles } from 'antd-style';
+import { Flexbox, PreviewGroup, ScrollShadow } from '@lobehub/ui';
+import * as stylex from '@stylexjs/stylex';
 import isEqual from 'fast-deep-equal';
 import { memo } from 'react';
-import { Flexbox } from 'react-layout-kit';
 
+import { useChatInputUploadKey } from '@/features/ChatInput/hooks/useChatInputUpload';
 import { useChatInputStore } from '@/features/ChatInput/store';
-import { filesSelectors, useFileStore } from '@/store/file';
+import { fileChatSelectors, useFileStore } from '@/store/file';
 
 import FileItem from './FileItem';
 
-const useStyles = createStyles(({ css }) => ({
-  container: css`
-    overflow-x: scroll;
-    width: 100%;
-  `,
-}));
+const styles = stylex.create({ container: { overflowX: 'scroll', width: '100%' } });
 
 const FilePreview = memo(() => {
   const expand = useChatInputStore((s) => s.expand);
-  const list = useFileStore(filesSelectors.chatUploadFileList, isEqual);
-  const { styles } = useStyles();
+  const contextKey = useChatInputUploadKey();
+  const list = useFileStore(fileChatSelectors.chatUploadFileList(contextKey), isEqual);
   if (!list || list?.length === 0) return null;
 
   return (
     <ScrollShadow
-      className={styles.container}
       hideScrollBar
       horizontal
+      className={stylex.props(styles.container).className}
       orientation={'horizontal'}
       size={8}
     >
-      <Flexbox gap={6} horizontal paddingBlock={8} paddingInline={expand ? 0 : 12}>
+      <Flexbox horizontal gap={6} paddingBlock={8} paddingInline={expand ? 0 : 12}>
         <PreviewGroup>
           {list.map((i) => (
             <FileItem {...i} key={i.id} loading={i.status === 'pending'} />
